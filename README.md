@@ -98,7 +98,7 @@ No secrets are stored in this repository. The installer writes a clearly‑marke
 
 ## Credits
 
-Built for [Claude Code](https://docs.claude.com/en/docs/claude-code) by Anthropic. Multi‑model routing for the non‑native providers uses [OpenRouter](https://openrouter.ai). Not affiliated with Anthropic, OpenRouter, or the model providers.
+Multi‑model routing for the non‑native providers uses [OpenRouter](https://openrouter.ai). Not affiliated with Anthropic, OpenRouter, or the model providers.
 
 ## License
 

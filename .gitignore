@@ -1,0 +1,22 @@
+# Logs and diagnostics
+*.log
+
+# Backups created by repair/uninstall
+*.router-backup
+*.bak
+
+# Local scratch / test artifacts
+envset.txt
+copy-done.txt
+CC-settings*.txt
+settings-dump.log
+
+# OS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Never commit real keys or exported config
+*.key
+secrets.*
+config.local.*

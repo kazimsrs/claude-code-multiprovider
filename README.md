@@ -104,6 +104,8 @@ Removes the shortcuts, the Manager app folder, and this project's env vars (incl
 - **`Unable to connect to API (ConnectionRefused)`** — a stale `ANTHROPIC_BASE_URL`/gateway override in `~/.claude/settings.json` (e.g. from a local-router experiment) is overriding your env. Run **`repair.ps1`**; it backs up and cleans it and resets the default to DeepSeek.
 - **Non-Anthropic model "forgets" files or won't run bash** — that's the agent-loop/tool-use caveat above. Switch to a direct provider or a coding-tuned model.
 - **`model not found`** — type the current model id/slug in the Model box.
+- **`400 ... maximum context length is 32768 tokens ... you requested ~55863`** — the model you chose is served with a small context window, but Claude Code sends ~20k of tool schemas plus up to 32k of requested output. Pick a **large-context** model: on OpenRouter, Qwen's `qwen/qwen3-coder-plus` / `qwen/…-max` slugs serve ~1M tokens. The Manager also caps requested output to 16k for OpenRouter routes to reduce overflow, but very small (32k) models still won't fit Claude Code's overhead.
+- **Test connection is green but a real turn fails** — the connection test sends a tiny request, so it passes even on a small-context model; the error above only appears on a full turn. Fix it by switching to a large-context model as noted.
 
 ## Files
 

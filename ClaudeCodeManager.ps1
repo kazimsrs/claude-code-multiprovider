@@ -364,6 +364,7 @@ $btnDefault.Add_Click({
     Set-UserVar 'ANTHROPIC_DEFAULT_SONNET_MODEL' $model
     if ($p.Name -like 'DeepSeek*') { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' 'deepseek-v4-flash'; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' 'deepseek-v4-flash' }
     else { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' $model; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' $model }
+    Set-UserVar 'CLAUDE_CODE_MAX_OUTPUT_TOKENS' $(if ($base -like '*openrouter.ai*') { '16000' } else { '32000' })
     Set-UserVar 'CCM_LAST_PROVIDER' $p.Name
     Broadcast-EnvChange
     [System.Windows.Forms.MessageBox]::Show(("Done. Typing  claude  in a NEW terminal now uses " + ($p.Name -replace ' \(OpenRouter\)','') + " (" + $model + ")."),'Claude Code Manager',0,64) | Out-Null
@@ -416,6 +417,9 @@ function Start-Claude($p) {
     if (-not $claude) { [System.Windows.Forms.MessageBox]::Show("Could not find the 'claude' command. Install Claude Code, then reopen this app.",'Claude Code Manager',0,16) | Out-Null; return }
     # Launch pins this provider/model/key as the active default; it won't drift until you launch another.
     $haiku = if ($p.Name -like 'DeepSeek*') { 'deepseek-v4-flash' } else { $model }
+    # Cap requested output for OpenRouter models: some are served with a small context window, and
+    # Claude Code otherwise asks for 32000 output on top of ~20k of tool schemas -> HTTP 400 overflow.
+    $maxOut = if ($base -like '*openrouter.ai*') { '16000' } else { '32000' }
     Set-UserVar 'ANTHROPIC_BASE_URL' $base
     Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $authKey
     Set-UserVar 'ANTHROPIC_MODEL' $model
@@ -423,6 +427,7 @@ function Start-Claude($p) {
     Set-UserVar 'ANTHROPIC_DEFAULT_SONNET_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' $haiku
     Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' $haiku
+    Set-UserVar 'CLAUDE_CODE_MAX_OUTPUT_TOKENS' $maxOut
     Set-UserVar 'CCM_LAST_PROVIDER' $p.Name
     Broadcast-EnvChange
     $bin = Split-Path $claude -Parent
@@ -440,6 +445,7 @@ function Start-Claude($p) {
     $psi.EnvironmentVariables['ANTHROPIC_DEFAULT_SONNET_MODEL'] = $model
     $psi.EnvironmentVariables['ANTHROPIC_DEFAULT_HAIKU_MODEL']  = $model
     $psi.EnvironmentVariables['CLAUDE_CODE_SUBAGENT_MODEL']     = $model
+    $psi.EnvironmentVariables['CLAUDE_CODE_MAX_OUTPUT_TOKENS']  = $maxOut
     $psi.EnvironmentVariables['CLAUDE_CODE_EFFORT_LEVEL']       = 'max'
     $psi.EnvironmentVariables['API_TIMEOUT_MS']                 = '3000000'
     $psi.EnvironmentVariables['CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT'] = '1'

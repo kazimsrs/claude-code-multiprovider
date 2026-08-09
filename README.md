@@ -31,6 +31,9 @@ DeepSeek, GLM (Z.ai), Kimi (Moonshot), Qwen (Alibaba), MiniMax, Anthropic (Claud
 **Via OpenRouter (all six share ONE OpenRouter key):**
 Nemotron, Gemini, OpenAI, Grok, Mistral, Llama — reached through OpenRouter's Anthropic-compatible endpoint (`https://openrouter.ai/api`).
 
+**Custom (any Anthropic-compatible endpoint you enter):**
+Point the Manager at any base URL + token — subscription "coding plans" that support Claude Code, self-hosted proxies (LiteLLM / claude-code-router), or corporate gateways. You provide the URL, token, and model name. `https` is required, and the app reminds you that your token is sent to that endpoint (only use gateways you trust).
+
 > ⚠️ **Read this before relying on the OpenRouter six.** Claude Code is an *agent*: it depends on faithful Anthropic-format **tool use** (reading files, running bash, applying edits). Claude Code's agent loop is only *guaranteed* against Anthropic's own models. Routing a model slot to OpenAI/Gemini/Llama/etc. works well for **coding-tuned, long-context** models — but a model that doesn't implement Anthropic tool-calling faithfully can appear to work and then **silently drop tool-call results**: Claude Code "forgets" file contents, won't run commands, or loops. That's the model breaking the agent loop, and it can read like this tool's fault.
 >
 > **Practical guidance:** for agentic coding, prefer the **direct** providers (DeepSeek, GLM, Kimi, Qwen) and **Anthropic** itself. Among the OpenRouter six, **Nemotron** (and coding-tuned models generally) tend to hold up best; treat the others as experimental for multi-step work. The Manager orders its model suggestions with the more agent-reliable choices first. See OpenRouter's own [Claude Code guide](https://openrouter.ai/blog/tutorials/claude-code-openrouter/).

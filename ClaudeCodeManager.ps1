@@ -50,6 +50,22 @@ function Get-ProvBase($p)   { if ($p.Kind -eq 'custom') { $b = Get-UserVar 'CUST
 function Has-Key($p)        { $k = Get-ProvKey $p; return (-not [string]::IsNullOrWhiteSpace($k) -and $k -ne $PLACEHOLDER) }
 function Api-Model($m)      { return ($m -replace '\[.*?\]','') }
 function Is-ORKey($k)       { return ($k -and ($k -like 'sk-or-*')) }
+function Is-ORSlug($m)      { return ($m -and $m.Contains('/')) }
+# Claude Code (and this app's tester) append '/v1/messages', so a base that already ends in /v1
+# would produce a broken '/v1/v1/messages'. Strip a trailing /v1 (and slashes) so both forms work.
+function Normalize-Base($b) { if ([string]::IsNullOrWhiteSpace($b)) { return $b }; $b = $b.Trim().TrimEnd('/'); if ($b -match '/v1$') { $b = $b.Substring(0,$b.Length-3).TrimEnd('/') }; return $b }
+# Decide the real endpoint + key for a provider. A request goes through OpenRouter when the key is an
+# OpenRouter key OR the model is a vendor/model slug (which only OpenRouter uses). In the slug case we
+# fall back to the shared OPENROUTER_API_KEY, so a mislabeled per-provider key still routes correctly.
+function Resolve-Route($p,$key,$model) {
+    if ($p.Kind -eq 'custom') { return @((Normalize-Base (Get-UserVar 'CUSTOM_BASE_URL')), $key) }
+    if ((Is-ORKey $key) -or (Is-ORSlug $model)) {
+        $k = $key
+        if (-not (Is-ORKey $k)) { $ork = Get-UserVar 'OPENROUTER_API_KEY'; if (-not [string]::IsNullOrWhiteSpace($ork)) { $k = $ork } }
+        return @($OR_URL, $k)
+    }
+    return @((Normalize-Base $p.Base), $key)
+}
 function Effective-Base($p,$key) { if ($p.Kind -ne 'custom' -and (Is-ORKey $key)) { return $OR_URL } else { return (Get-ProvBase $p) } }
 
 function Resolve-Claude {
@@ -209,9 +225,14 @@ function Refresh-Overview {
     }
     $lblOver.Text = ("Direct:      " + ($direct -join "   ") + "`r`nOpenRouter:  " + ($orr -join "   ") + "`r`nCustom:      " + ($cust -join "   "))
     $cur = Get-UserVar 'ANTHROPIC_BASE_URL'; $curm = Get-UserVar 'ANTHROPIC_MODEL'
-    $name = 'DeepSeek'
-    foreach ($p in $providers) { $b = Get-ProvBase $p; if ($b -ne '' -and $b -eq $cur) { if ($p.Kind -eq 'openrouter') { $name = 'OpenRouter' } elseif ($p.Kind -eq 'custom') { $name = 'Custom endpoint' } else { $name = $p.Name } } }
-    $lblDefNow.Text = ('Terminal default now: ' + $name + '  (' + $curm + ')')
+    $last = Get-UserVar 'CCM_LAST_PROVIDER'
+    $name = ''
+    if (-not [string]::IsNullOrWhiteSpace($last)) { $name = ($last -replace ' \(OpenRouter\)','') }
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        $name = 'DeepSeek'
+        foreach ($p in $providers) { $b = Get-ProvBase $p; if ($b -ne '' -and $b -eq $cur) { if ($p.Kind -eq 'openrouter') { $name = 'OpenRouter' } elseif ($p.Kind -eq 'custom') { $name = 'Custom endpoint' } else { $name = $p.Name } } }
+    }
+    $lblDefNow.Text = ('Active provider: ' + $name + '  (' + $curm + ')')
 }
 
 function Load-Provider {
@@ -251,10 +272,11 @@ function Update-RouteHint {
     $p = Current-Prov
     if ($p.Kind -ne 'direct') { return }
     $key = $txtKey.Text.Trim(); if ([string]::IsNullOrWhiteSpace($key)) { $key = Get-ProvKey $p }
-    if (Is-ORKey $key) {
-        $lblEnd.Text = 'Routing via OpenRouter (OpenRouter key detected)'
+    $model = $txtMod.Text.Trim()
+    if ((Is-ORKey $key) -or (Is-ORSlug $model)) {
+        $lblEnd.Text = 'Routing via OpenRouter'
         $lblKind.ForeColor = $blue
-        $lblKind.Text = 'Your key looks like OpenRouter - requests go to openrouter.ai. Use an OpenRouter model slug (e.g. qwen/..., deepseek/..., nvidia/...).'
+        $lblKind.Text = 'Requests go to openrouter.ai (OpenRouter key or vendor/model slug detected). Use an OpenRouter slug (e.g. qwen/..., deepseek/..., nvidia/...) and your sk-or-v1- key.'
     } else {
         $lblEnd.Text = 'Endpoint: ' + $p.Base
         $lblKind.ForeColor = $green
@@ -263,6 +285,7 @@ function Update-RouteHint {
 }
 $combo.Add_SelectedIndexChanged({ Load-Provider })
 $txtKey.Add_TextChanged({ Update-RouteHint })
+$txtMod.Add_TextChanged({ Update-RouteHint })
 $btnLatest.Add_Click({ $txtMod.Text = (Current-Prov).Default })
 
 $btnSave.Add_Click({
@@ -326,21 +349,22 @@ $btnClear.Add_Click({
 $btnDefault.Add_Click({
     $p = Current-Prov
     $key = Get-ProvKey $p
-    $base = Effective-Base $p $key
     if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) {
         [System.Windows.Forms.MessageBox]::Show("Save a key for this provider first, then make it your terminal default.",'Claude Code Manager',0,48) | Out-Null; return
     }
+    $model = Get-ProvModel $p
+    $rr = Resolve-Route $p $key $model; $base = $rr[0]; $authKey = $rr[1]
     if ([string]::IsNullOrWhiteSpace($base)) {
         [System.Windows.Forms.MessageBox]::Show("Set and save this provider's Base URL first.",'Claude Code Manager',0,48) | Out-Null; return
     }
-    $model = Get-ProvModel $p
     Set-UserVar 'ANTHROPIC_BASE_URL' $base
-    Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $key
+    Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $authKey
     Set-UserVar 'ANTHROPIC_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_OPUS_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_SONNET_MODEL' $model
     if ($p.Name -like 'DeepSeek*') { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' 'deepseek-v4-flash'; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' 'deepseek-v4-flash' }
     else { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' $model; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' $model }
+    Set-UserVar 'CCM_LAST_PROVIDER' $p.Name
     Broadcast-EnvChange
     [System.Windows.Forms.MessageBox]::Show(("Done. Typing  claude  in a NEW terminal now uses " + ($p.Name -replace ' \(OpenRouter\)','') + " (" + $model + ")."),'Claude Code Manager',0,64) | Out-Null
     Refresh-Overview
@@ -349,15 +373,20 @@ $btnDefault.Add_Click({
 function Test-Provider($p) {
     $key = Get-ProvKey $p
     if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $lblState.ForeColor = $red; $lblState.Text = 'no key - save one first'; return }
-    if ($p.Kind -eq 'custom') { $base = $txtBase.Text.Trim(); if ($base -notmatch '^https://') { $lblState.ForeColor = $red; $lblState.Text = 'set a https Base URL'; return } }
-    else { $base = Effective-Base $p $key }
-    $w = Key-ShapeWarning $p $key
+    $modelRaw = Get-ProvModel $p
+    if ([string]::IsNullOrWhiteSpace($modelRaw)) { $lblState.ForeColor = $red; $lblState.Text = 'enter a model'; return }
+    if ($p.Kind -eq 'custom') {
+        if ($txtBase.Text.Trim() -notmatch '^https://') { $lblState.ForeColor = $red; $lblState.Text = 'set a https Base URL'; return }
+        $base = Normalize-Base ($txtBase.Text.Trim()); $authKey = $key
+    } else {
+        $rr = Resolve-Route $p $key $modelRaw; $base = $rr[0]; $authKey = $rr[1]
+    }
+    $w = Key-ShapeWarning $p $authKey
     if ($w) { $lblState.ForeColor = $red; $lblState.Text = 'key format looks wrong'; return }
-    $model = Api-Model (Get-ProvModel $p)
-    if ([string]::IsNullOrWhiteSpace($model)) { $lblState.ForeColor = $red; $lblState.Text = 'enter a model'; return }
+    $model = Api-Model $modelRaw
     $url = ($base.TrimEnd('/')) + '/v1/messages'
-    $hdr = @{ 'x-api-key' = $key; 'anthropic-version' = '2023-06-01'; 'content-type' = 'application/json' }
-    if ($p.Kind -ne 'direct') { $hdr['authorization'] = 'Bearer ' + $key }
+    $hdr = @{ 'x-api-key' = $authKey; 'anthropic-version' = '2023-06-01'; 'content-type' = 'application/json' }
+    if ($p.Kind -ne 'direct' -or $base -like '*openrouter.ai*') { $hdr['authorization'] = 'Bearer ' + $authKey }
     $body = @{ model = $model; max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
     $btnTest.Enabled = $false; $lblState.ForeColor = $blue; $lblState.Text = 'testing...'; $form.Refresh()
     try {
@@ -379,21 +408,22 @@ function Start-Claude($p) {
         [System.Windows.Forms.MessageBox]::Show(("No key saved. Enter " + $what + " above and click 'Save key and model' first."),'Claude Code Manager',0,48) | Out-Null
         return
     }
-    $base = Effective-Base $p $key
+    $model = Get-ProvModel $p
+    if ([string]::IsNullOrWhiteSpace($model)) { [System.Windows.Forms.MessageBox]::Show("Enter a model name first.",'Claude Code Manager',0,48) | Out-Null; return }
+    $rr = Resolve-Route $p $key $model; $base = $rr[0]; $authKey = $rr[1]
     if ([string]::IsNullOrWhiteSpace($base)) { [System.Windows.Forms.MessageBox]::Show("Set and save this provider's Base URL first.",'Claude Code Manager',0,48) | Out-Null; return }
     $claude = Resolve-Claude
     if (-not $claude) { [System.Windows.Forms.MessageBox]::Show("Could not find the 'claude' command. Install Claude Code, then reopen this app.",'Claude Code Manager',0,16) | Out-Null; return }
-    $model = Get-ProvModel $p
-    if ([string]::IsNullOrWhiteSpace($model)) { [System.Windows.Forms.MessageBox]::Show("Enter a model name first.",'Claude Code Manager',0,48) | Out-Null; return }
     # Launch pins this provider/model/key as the active default; it won't drift until you launch another.
     $haiku = if ($p.Name -like 'DeepSeek*') { 'deepseek-v4-flash' } else { $model }
     Set-UserVar 'ANTHROPIC_BASE_URL' $base
-    Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $key
+    Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $authKey
     Set-UserVar 'ANTHROPIC_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_OPUS_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_SONNET_MODEL' $model
     Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' $haiku
     Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' $haiku
+    Set-UserVar 'CCM_LAST_PROVIDER' $p.Name
     Broadcast-EnvChange
     $bin = Split-Path $claude -Parent
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -403,7 +433,7 @@ function Start-Claude($p) {
     $psi.CreateNoWindow = $true
     $psi.Arguments = '/c start "Claude Code" cmd /k claude'
     $psi.EnvironmentVariables['ANTHROPIC_BASE_URL']             = $base
-    $psi.EnvironmentVariables['ANTHROPIC_AUTH_TOKEN']           = $key
+    $psi.EnvironmentVariables['ANTHROPIC_AUTH_TOKEN']           = $authKey
     $psi.EnvironmentVariables['ANTHROPIC_API_KEY']             = ''
     $psi.EnvironmentVariables['ANTHROPIC_MODEL']                = $model
     $psi.EnvironmentVariables['ANTHROPIC_DEFAULT_OPUS_MODEL']   = $model
@@ -423,7 +453,11 @@ function Start-Claude($p) {
 $btnLaunch.Add_Click({ Start-Claude (Current-Prov) })
 $btnTest.Add_Click({ Test-Provider (Current-Prov) })
 
-$combo.SelectedIndex = 0
+# Open on the provider you last launched / made default (falls back to the first provider).
+$startIdx = 0
+$lastProv = Get-UserVar 'CCM_LAST_PROVIDER'
+if (-not [string]::IsNullOrWhiteSpace($lastProv)) { for ($i = 0; $i -lt $providers.Count; $i++) { if ($providers[$i].Name -eq $lastProv) { $startIdx = $i; break } } }
+$combo.SelectedIndex = $startIdx
 Load-Provider
 Refresh-Overview
 [void]$form.ShowDialog()

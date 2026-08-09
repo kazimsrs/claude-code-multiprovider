@@ -364,7 +364,7 @@ $btnDefault.Add_Click({
     Set-UserVar 'ANTHROPIC_DEFAULT_SONNET_MODEL' $model
     if ($p.Name -like 'DeepSeek*') { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' 'deepseek-v4-flash'; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' 'deepseek-v4-flash' }
     else { Set-UserVar 'ANTHROPIC_DEFAULT_HAIKU_MODEL' $model; Set-UserVar 'CLAUDE_CODE_SUBAGENT_MODEL' $model }
-    Set-UserVar 'CLAUDE_CODE_MAX_OUTPUT_TOKENS' $(if ($base -like '*openrouter.ai*') { '16000' } else { '32000' })
+    Set-UserVar 'CLAUDE_CODE_MAX_OUTPUT_TOKENS' $(if ($base -like '*openrouter.ai*') { '8000' } else { '32000' })
     Set-UserVar 'CCM_LAST_PROVIDER' $p.Name
     Broadcast-EnvChange
     [System.Windows.Forms.MessageBox]::Show(("Done. Typing  claude  in a NEW terminal now uses " + ($p.Name -replace ' \(OpenRouter\)','') + " (" + $model + ")."),'Claude Code Manager',0,64) | Out-Null
@@ -417,9 +417,10 @@ function Start-Claude($p) {
     if (-not $claude) { [System.Windows.Forms.MessageBox]::Show("Could not find the 'claude' command. Install Claude Code, then reopen this app.",'Claude Code Manager',0,16) | Out-Null; return }
     # Launch pins this provider/model/key as the active default; it won't drift until you launch another.
     $haiku = if ($p.Name -like 'DeepSeek*') { 'deepseek-v4-flash' } else { $model }
-    # Cap requested output for OpenRouter models: some are served with a small context window, and
-    # Claude Code otherwise asks for 32000 output on top of ~20k of tool schemas -> HTTP 400 overflow.
-    $maxOut = if ($base -like '*openrouter.ai*') { '16000' } else { '32000' }
+    # Cap requested output for OpenRouter models. Claude Code otherwise asks for 32000 output on top of
+    # ~20k of tool schemas, which overflows small-context models (HTTP 400) and, on low-balance OpenRouter
+    # accounts, exceeds what the balance can afford (HTTP 402). 8000 fits a 32k window and stays affordable.
+    $maxOut = if ($base -like '*openrouter.ai*') { '8000' } else { '32000' }
     Set-UserVar 'ANTHROPIC_BASE_URL' $base
     Set-UserVar 'ANTHROPIC_AUTH_TOKEN' $authKey
     Set-UserVar 'ANTHROPIC_MODEL' $model

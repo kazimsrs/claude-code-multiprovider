@@ -166,8 +166,9 @@ function Start-CcmProxy([string]$Base, [string]$Key, [string]$Model) {
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = $py
-  # Standard proxy invocation; -m litellm runs the same console entrypoint.
-  $psi.Arguments = "-m litellm --config `"$cfg`" --host 127.0.0.1 --port $port --num_workers 1"
+  # Launch the proxy via the proxy CLI module. NOTE: 'python -m litellm' FAILS ('litellm' is a
+  # package with no __main__); the working invocation is 'python -m litellm.proxy.proxy_cli'.
+  $psi.Arguments = "-m litellm.proxy.proxy_cli --config `"$cfg`" --host 127.0.0.1 --port $port --num_workers 1"
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true

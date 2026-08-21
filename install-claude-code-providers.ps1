@@ -6,8 +6,10 @@
 #  - Prevents the login-page stall (hasCompletedOnboarding)
 #  - Installs the Provider Manager app + icons + 2 Desktop shortcuts
 #  Direct providers (own key):    DeepSeek, GLM, Kimi, Qwen, MiniMax, Anthropic
-#  OpenRouter providers (1 key):  Nemotron, Gemini, OpenAI, Grok, Mistral, Llama
-#  No local router / no Node / no background service.
+#  OpenRouter:                    ONE provider, all models (live list, incl :free)
+#  Native key (LiteLLM proxy):    any OpenAI-compatible provider with its OWN key
+#  Custom:                        any Anthropic-compatible endpoint
+#  Optional sound notifications when Claude Code needs you / finishes a task.
 #  SAFETY: your real API keys are NOT entered here - placeholders only.
 # ============================================================
 
@@ -78,6 +80,15 @@ New-Item -ItemType Directory -Path $app -Force | Out-Null
 Copy-Item (Join-Path $PSScriptRoot 'ClaudeCodeManager.ps1') $app -Force
 Copy-Item (Join-Path $PSScriptRoot 'ccm.ico') $app -Force
 Copy-Item (Join-Path $PSScriptRoot 'claude-code.ico') $app -Force
+# Bundled helper scripts (proxy + notify) and notification sounds - required by the Manager.
+foreach ($sub in @('scripts','assets')) {
+    $src = Join-Path $PSScriptRoot $sub
+    if (Test-Path $src) {
+        $dst = Join-Path $app $sub
+        if (Test-Path $dst) { Remove-Item $dst -Recurse -Force -ErrorAction SilentlyContinue }
+        Copy-Item $src $dst -Recurse -Force
+    }
+}
 # Direct launcher with a friendly guard if no key is set yet
 $launchCmd = @(
     '@echo off',
@@ -107,11 +118,39 @@ $s2 = $ws.CreateShortcut((Join-Path $desktop 'Claude Code Manager.lnk'))
 $s2.TargetPath = $ps; $s2.Arguments = '-Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $app 'ClaudeCodeManager.ps1') + '"'; $s2.WorkingDirectory = $app; $s2.IconLocation = (Join-Path $app 'ccm.ico') + ',0'; $s2.Description = 'Add API keys, change models, switch provider'; $s2.Save()
 Write-Host '      Shortcuts ready (Claude Code + Claude Code Manager).' -ForegroundColor Green
 
+# ---- 6. One-time native-provider setup (LiteLLM) so it ships with CCM, not on first Launch ----
+Write-Host '[6/6] Setting up native-key provider support (LiteLLM)...'
+$proxyLib = Join-Path $app 'scripts\ccm-proxy-lib.ps1'
+if (Test-Path $proxyLib) {
+    . $proxyLib
+    $py = Find-Python
+    if (-not $py) {
+        Write-Host '      No Python 3.10-3.12 found. Native-key providers (Mistral, OpenAI, Groq...) need it.' -ForegroundColor Yellow
+        Write-Host '      Install Python 3.12 from https://www.python.org/downloads/ (tick "Add python.exe to PATH"),' -ForegroundColor Yellow
+        Write-Host '      then in the Manager pick a native-key provider and click Launch to finish setup (one time).' -ForegroundColor Yellow
+    } elseif (Test-LiteLLM $py) {
+        Write-Host '      LiteLLM already installed - ready.' -ForegroundColor Green
+    } else {
+        $pv = Get-PyVersion $py
+        Write-Host ("      Installing LiteLLM on Python " + $pv + " (one time, up to a few minutes)...")
+        $ins = Install-LiteLLM
+        if ($ins.Ok) { Write-Host ('      ' + $ins.Msg) -ForegroundColor Green }
+        else { Write-Host ('      ' + $ins.Msg) -ForegroundColor Yellow }
+    }
+} else {
+    Write-Host '      (proxy library not found - skipping; native-key setup will run from the Manager instead.)' -ForegroundColor Yellow
+}
+
 Write-Host ''
 Write-Host '=== DONE ===' -ForegroundColor Cyan
-Write-Host 'Direct (own key):         DeepSeek, GLM, Kimi, Qwen, MiniMax, Anthropic'
-Write-Host 'OpenRouter (1 shared key): Nemotron, Gemini, OpenAI, Grok, Mistral, Llama'
+Write-Host 'Direct (own key):   DeepSeek, GLM, Kimi, Qwen, MiniMax, Anthropic'
+Write-Host 'OpenRouter:         one key, every model (pick or type any slug, incl :free)'
+Write-Host 'Native key (proxy): any OpenAI-compatible provider (Mistral, OpenAI, Groq...) with its OWN key'
+Write-Host 'Custom:             any Anthropic-compatible endpoint'
+Write-Host ''
+Write-Host 'Native-key providers use a local LiteLLM proxy (set up once above; needs Python 3.10-3.12). It runs'
+Write-Host 'only while a native-key provider is active - not for DeepSeek/Anthropic/OpenRouter/etc.'
+Write-Host 'Optional: set notification sounds in the Manager so you hear when Claude needs you / finishes.'
 Write-Host ''
 Write-Host 'Open "Claude Code Manager" -> pick a provider -> paste key -> Save -> Test/Launch.'
-Write-Host 'Any provider can be made the terminal default from the Manager.'
 Write-Host ''

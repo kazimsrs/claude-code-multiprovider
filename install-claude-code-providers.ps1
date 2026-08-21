@@ -7,7 +7,7 @@
 #  - Installs the Provider Manager app + icons + 2 Desktop shortcuts
 #  Direct providers (own key):    DeepSeek, GLM, Kimi, Qwen, MiniMax, Anthropic
 #  OpenRouter:                    ONE provider, all models (live list, incl :free)
-#  Native key (LiteLLM proxy):    any OpenAI-compatible provider with its OWN key
+#  Native key (claude-code-router): any OpenAI-compatible provider with its OWN key
 #  Custom:                        any Anthropic-compatible endpoint
 #  Optional sound notifications when Claude Code needs you / finishes a task.
 #  SAFETY: your real API keys are NOT entered here - placeholders only.
@@ -113,27 +113,31 @@ $desktop = [Environment]::GetFolderPath('Desktop')
 $ws = New-Object -ComObject WScript.Shell
 $s1 = $ws.CreateShortcut((Join-Path $desktop 'Claude Code.lnk'))
 $s1.TargetPath = (Join-Path $app 'launch-claude.cmd'); $s1.WorkingDirectory = $env:USERPROFILE; $s1.IconLocation = (Join-Path $app 'claude-code.ico') + ',0'; $s1.Description = 'Open Claude Code (DeepSeek default)'; $s1.Save()
-$ps = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+# Launch the Manager through a GUI-subsystem VBS (wscript) so NO console/terminal window ever
+# appears - not even a flash - on Windows 11 where Windows Terminal ignores -WindowStyle Hidden.
+$vbsPath = Join-Path $app 'ccm-launch.vbs'
+$vbsBody = 'Set sh = CreateObject("WScript.Shell")' + "`r`n" +
+           'sh.Run "powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\ClaudeCodeManager\ClaudeCodeManager.ps1""", 0, False'
+[System.IO.File]::WriteAllText($vbsPath, $vbsBody, (New-Object System.Text.ASCIIEncoding))
+$wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
 $s2 = $ws.CreateShortcut((Join-Path $desktop 'Claude Code Manager.lnk'))
-$s2.TargetPath = $ps; $s2.Arguments = '-Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $app 'ClaudeCodeManager.ps1') + '"'; $s2.WorkingDirectory = $app; $s2.IconLocation = (Join-Path $app 'ccm.ico') + ',0'; $s2.Description = 'Add API keys, change models, switch provider'; $s2.Save()
+$s2.TargetPath = $wscript; $s2.Arguments = '"' + $vbsPath + '"'; $s2.WorkingDirectory = $app; $s2.IconLocation = (Join-Path $app 'ccm.ico') + ',0'; $s2.Description = 'Add API keys, change models, switch provider'; $s2.Save()
 Write-Host '      Shortcuts ready (Claude Code + Claude Code Manager).' -ForegroundColor Green
 
-# ---- 6. One-time native-provider setup (LiteLLM) so it ships with CCM, not on first Launch ----
-Write-Host '[6/6] Setting up native-key provider support (LiteLLM)...'
+# ---- 6. One-time native-provider setup (claude-code-router) so it ships with CCM ----
+Write-Host '[6/6] Setting up native-key provider support (claude-code-router)...'
 $proxyLib = Join-Path $app 'scripts\ccm-proxy-lib.ps1'
 if (Test-Path $proxyLib) {
     . $proxyLib
-    $py = Find-Python
-    if (-not $py) {
-        Write-Host '      No Python 3.10-3.12 found. Native-key providers (Mistral, OpenAI, Groq...) need it.' -ForegroundColor Yellow
-        Write-Host '      Install Python 3.12 from https://www.python.org/downloads/ (tick "Add python.exe to PATH"),' -ForegroundColor Yellow
-        Write-Host '      then in the Manager pick a native-key provider and click Launch to finish setup (one time).' -ForegroundColor Yellow
-    } elseif (Test-LiteLLM $py) {
-        Write-Host '      LiteLLM already installed - ready.' -ForegroundColor Green
+    if (Test-Ccr) {
+        Write-Host '      claude-code-router already installed - ready.' -ForegroundColor Green
+    } elseif (-not (Find-Npm)) {
+        Write-Host '      Node.js not found. Native-key providers (Mistral, OpenAI, Groq...) need it.' -ForegroundColor Yellow
+        Write-Host '      Install Node.js LTS from https://nodejs.org/ (tick "Add to PATH"), then in the Manager' -ForegroundColor Yellow
+        Write-Host '      pick a native-key provider and click Launch to finish setup (one time).' -ForegroundColor Yellow
     } else {
-        $pv = Get-PyVersion $py
-        Write-Host ("      Installing LiteLLM on Python " + $pv + " (one time, up to a few minutes)...")
-        $ins = Install-LiteLLM
+        Write-Host '      Installing claude-code-router (one time, a few seconds)...'
+        $ins = Install-Ccr
         if ($ins.Ok) { Write-Host ('      ' + $ins.Msg) -ForegroundColor Green }
         else { Write-Host ('      ' + $ins.Msg) -ForegroundColor Yellow }
     }
@@ -148,7 +152,7 @@ Write-Host 'OpenRouter:         one key, every model (pick or type any slug, inc
 Write-Host 'Native key (proxy): any OpenAI-compatible provider (Mistral, OpenAI, Groq...) with its OWN key'
 Write-Host 'Custom:             any Anthropic-compatible endpoint'
 Write-Host ''
-Write-Host 'Native-key providers use a local LiteLLM proxy (set up once above; needs Python 3.10-3.12). It runs'
+Write-Host 'Native-key providers use a local claude-code-router proxy (set up once above; needs Node.js). It runs'
 Write-Host 'only while a native-key provider is active - not for DeepSeek/Anthropic/OpenRouter/etc.'
 Write-Host 'Optional: set notification sounds in the Manager so you hear when Claude needs you / finishes.'
 Write-Host ''

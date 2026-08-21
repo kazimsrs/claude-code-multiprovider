@@ -31,13 +31,13 @@ DeepSeek, GLM (Z.ai), Kimi (Moonshot), Qwen (Alibaba), MiniMax, Anthropic (Claud
 **2. OpenRouter (one key, every model):**
 A single **OpenRouter** provider — no more per-vendor entries. Reached through OpenRouter's Anthropic-compatible endpoint (`https://openrouter.ai/api`). The Model box is populated **live from OpenRouter's catalogue** (click *Refresh models*), so you can pick or type **any** slug — including free `:free` models. Free models are supported; the Manager lowers the requested output cap to 4k for `:free` slugs so small-context free models don't 400.
 
-**3. Native key via local LiteLLM proxy (NEW):**
-Use a provider's **own** API key — *without* going through OpenRouter. There are ready-made presets for **Mistral, OpenAI, Groq, xAI (Grok), Together AI, DeepInfra, Cerebras, Fireworks, and a local Ollama** (each pre-wired with the right endpoint — just paste that provider's key), plus a generic **OpenAI-compatible (any)** entry where you type any base URL for anything else that speaks OpenAI Chat Completions. CCM runs a small [LiteLLM](https://github.com/BerriAI/litellm) proxy **locally on `127.0.0.1`** that translates between Claude Code's Anthropic protocol and the provider's OpenAI format. It runs **only while a native-key provider is active** and is installed automatically on first use (needs Python 3.10+). Nothing is sent to any third party — the proxy talks straight from your machine to the provider with your key.
+**3. Native key via local claude-code-router (NEW):**
+Use a provider's **own** API key — *without* going through OpenRouter. There are ready-made presets for **Mistral, OpenAI, Groq, xAI (Grok), Together AI, DeepInfra, Cerebras, Fireworks, and a local Ollama** (each pre-wired with the right endpoint — just paste that provider's key), plus a generic **OpenAI-compatible (any)** entry where you type any base URL for anything else that speaks OpenAI Chat Completions. CCM runs a small [claude-code-router](https://github.com/musistudio/claude-code-router) proxy (Node.js) **locally on `127.0.0.1:3456`** that translates between Claude Code's Anthropic protocol and the provider's OpenAI format. It's lightweight, starts fast, runs **only while a native-key provider is active**, and is installed automatically on first use (needs Node.js). Nothing is sent to any third party — the proxy talks straight from your machine to the provider with your key.
 
 **4. Custom (any Anthropic-compatible endpoint you enter):**
 Point the Manager at any base URL + token — subscription "coding plans", self-hosted gateways, etc. `https` is required. Test connection now **auto-detects** whether the endpoint wants an `x-api-key` or a `Bearer` token and remembers it, which fixes custom endpoints (e.g. a DeepSeek `…/anthropic` base) that previously configured but wouldn't connect.
 
-> ⚠️ **The agent-loop caveat still applies to non-Anthropic models.** Claude Code depends on faithful Anthropic-format **tool use** (reading files, running bash, applying edits). A model that doesn't implement tool-calling faithfully can appear to work and then **silently drop tool-call results**: Claude Code "forgets" files, won't run commands, or loops. The LiteLLM proxy is configured to translate through **OpenAI Chat Completions** (`use_chat_completions_url_for_anthropic_messages`), the dialect nearly every provider implements — but the *model* still has to support tool use. For agentic coding, prefer **direct** providers (DeepSeek, GLM, Kimi, Qwen), **Anthropic**, or coding-tuned, tool-capable models. Treat others as experimental for multi-step work.
+> ⚠️ **The agent-loop caveat still applies to non-Anthropic models.** Claude Code depends on faithful Anthropic-format **tool use** (reading files, running bash, applying edits). A model that doesn't implement tool-calling faithfully can appear to work and then **silently drop tool-call results**: Claude Code "forgets" files, won't run commands, or loops. claude-code-router translates through **OpenAI Chat Completions**, the dialect nearly every provider implements — but the *model* still has to support tool use. For agentic coding, prefer **direct** providers (DeepSeek, GLM, Kimi, Qwen), **Anthropic**, or coding-tuned, tool-capable models. Treat others as experimental for multi-step work.
 
 ## Notifications — hear when Claude needs you (NEW)
 
@@ -77,16 +77,16 @@ Give Claude Code a long task and walk away; CCM can play a sound when it **needs
 | MiniMax | direct | `minimax-m2.7` |
 | Anthropic (Claude) | direct | `claude-opus-4.7` |
 | **OpenRouter** | OpenRouter (one key, all models) | any slug — live list, incl `:free` |
-| **Mistral** (native key) | local LiteLLM proxy | `mistral-large-latest`, `codestral-latest`, … |
-| **OpenAI** (native key) | local LiteLLM proxy | `gpt-4o`, `gpt-4.1`, `o4-mini`, … |
-| **Groq** (native key) | local LiteLLM proxy | `llama-3.3-70b-versatile`, `qwen-2.5-coder-32b`, … |
-| **xAI Grok** (native key) | local LiteLLM proxy | `grok-2-latest`, … |
-| **Together AI** (native key) | local LiteLLM proxy | `meta-llama/Llama-3.3-70B-Instruct-Turbo`, … |
-| **DeepInfra** (native key) | local LiteLLM proxy | `meta-llama/Llama-3.3-70B-Instruct`, … |
-| **Cerebras** (native key) | local LiteLLM proxy | `llama-3.3-70b`, … |
-| **Fireworks** (native key) | local LiteLLM proxy | `accounts/fireworks/models/…` |
-| **Ollama** (local, native) | local LiteLLM proxy | `qwen2.5-coder`, `llama3.3`, … (any key value) |
-| **OpenAI-compatible (any)** | local LiteLLM proxy | you type the base URL + model |
+| **Mistral** (native key) | local claude-code-router | `mistral-large-latest`, `codestral-latest`, … |
+| **OpenAI** (native key) | local claude-code-router | `gpt-4o`, `gpt-4.1`, `o4-mini`, … |
+| **Groq** (native key) | local claude-code-router | `llama-3.3-70b-versatile`, `qwen-2.5-coder-32b`, … |
+| **xAI Grok** (native key) | local claude-code-router | `grok-2-latest`, … |
+| **Together AI** (native key) | local claude-code-router | `meta-llama/Llama-3.3-70B-Instruct-Turbo`, … |
+| **DeepInfra** (native key) | local claude-code-router | `meta-llama/Llama-3.3-70B-Instruct`, … |
+| **Cerebras** (native key) | local claude-code-router | `llama-3.3-70b`, … |
+| **Fireworks** (native key) | local claude-code-router | `accounts/fireworks/models/…` |
+| **Ollama** (local, native) | local claude-code-router | `qwen2.5-coder`, `llama3.3`, … (any key value) |
+| **OpenAI-compatible (any)** | local claude-code-router | you type the base URL + model |
 | Custom | any Anthropic-compatible endpoint | whatever the endpoint expects |
 
 Model names change; the Model box is free-type. For OpenRouter, click **Refresh models** to pull the current catalogue, or browse slugs at [openrouter.ai/models](https://openrouter.ai/models). For native-key providers, common base URLs are shown in the Manager (Mistral `https://api.mistral.ai/v1`, OpenAI `https://api.openai.com/v1`, Groq `https://api.groq.com/openai/v1`, Together `https://api.together.xyz/v1`, Ollama `http://localhost:11434/v1`).
@@ -129,16 +129,16 @@ Removes the shortcuts, the Manager app folder, and this project's env vars (incl
 | `claude-code.ico` / `ccm.ico` | Icons for the Claude Code and Manager shortcuts |
 | `repair.ps1` | Fixes the ConnectionRefused / stale-settings override |
 | `uninstall.ps1` | Removes shortcuts, app folder, env vars, proxy data, and sound hooks |
-| `scripts/ccm-proxy-lib.ps1` | Installs/starts/stops the local LiteLLM proxy for native-key providers |
+| `scripts/ccm-proxy-lib.ps1` | Installs/starts/stops the local claude-code-router for native-key providers |
 | `scripts/ccm-notify.ps1` | Plays the notification sound (called by Claude Code hooks) |
 | `assets/sounds/` | Built-in notification sounds (`ping`, `bell`, `blip`, `chime`) |
 | `assets/` | Logos and screenshots |
 
 ## Native-key providers — requirements & notes
 
-- Needs **Python 3.10+** on PATH. First time you Launch a native-key provider, CCM runs `pip install "litellm[proxy]"` automatically (one-time, ~30–60s). If the proxy import fails due to a newer FastAPI, CCM pins a compatible FastAPI and retries.
-- The proxy binds to `127.0.0.1` only and is started/stopped by CCM. Switching to any non-proxy provider stops it. It does **not** auto-start on reboot, so for a native-key **terminal default** the proxy must be running (use **Launch**, or re-open the Manager).
-- Config is written to `%LOCALAPPDATA%\CCM\litellm_config.yaml`; logs to `%LOCALAPPDATA%\CCM\litellm.log`.
+- Needs **Node.js** on PATH (most Claude Code setups already have it). First time you Launch a native-key provider, CCM runs `npm install -g @musistudio/claude-code-router@1.0.73` automatically (one-time, a few seconds).
+- The router binds to `127.0.0.1:3456` only and is started/stopped by CCM (it manages its own background service, so it survives the Manager closing). Switching to any non-proxy provider stops it.
+- Router config is written to `%USERPROFILE%\.claude-code-router\config.json`; CCM's start/stop logs go to `%LOCALAPPDATA%\CCM\ccr.log`.
 
 ## Credits
 

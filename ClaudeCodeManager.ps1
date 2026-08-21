@@ -3,7 +3,7 @@
 #  Direct providers   : native Anthropic-compatible APIs (own key).
 #  OpenRouter         : ONE provider, all models (live list), free-type slug incl :free.
 #  Native key (proxy) : any OpenAI-compatible provider with its OWN key, via a local
-#                       LiteLLM proxy that runs ONLY while such a provider is active.
+#                       claude-code-router (Node) proxy that runs ONLY while such a provider is active.
 #  Custom             : any Anthropic-compatible endpoint you enter.
 #  Notifications      : optional sounds when Claude Code needs you / finishes a task.
 # ============================================================
@@ -15,6 +15,7 @@ Add-Type -AssemblyName System.Drawing
 # ---- locate bundled helper scripts / assets ----
 $ScriptsDir = Join-Path $PSScriptRoot 'scripts'
 $SoundDir   = Join-Path $PSScriptRoot 'assets\sounds'
+$RickFile   = Join-Path $SoundDir 'rickroll.mp3'   # optional bundled default (present only if shipped with it)
 $NotifyPs1  = Join-Path $ScriptsDir 'ccm-notify.ps1'
 $ProxyLib   = Join-Path $ScriptsDir 'ccm-proxy-lib.ps1'
 if (Test-Path $ProxyLib) { . $ProxyLib } else {
@@ -22,18 +23,91 @@ if (Test-Path $ProxyLib) { . $ProxyLib } else {
   function Start-CcmProxy { param($Base,$Key,$Model) return @{ Ok=$false; Msg='ccm-proxy-lib.ps1 not found next to this app.' } }
   function Stop-CcmProxy {}
   function Get-CcmProxyStatus { return @{ Running=$false } }
-  function Ensure-LiteLLM { return @{ Ok=$false; NeedInstall=$false; Msg='ccm-proxy-lib.ps1 not found.' } }
-  function Install-LiteLLM { param([int]$TimeoutSec=420) return @{ Ok=$false; Msg='ccm-proxy-lib.ps1 not found.' } }
+  function Ensure-Ccr { return @{ Ok=$false; NeedInstall=$false; Msg='ccm-proxy-lib.ps1 not found.' } }
+  function Install-Ccr { param([int]$TimeoutSec=300) return @{ Ok=$false; Msg='ccm-proxy-lib.ps1 not found.' } }
 }
 
 if (-not ([System.Management.Automation.PSTypeName]'CcmNative.Win32').Type) {
     Add-Type -Namespace CcmNative -Name Win32 -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Auto)]
 public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[System.Runtime.InteropServices.DllImport("kernel32.dll")]
+public static extern bool FreeConsole();
 '@
 }
+# This is a WinForms GUI - it must open as just the window, never a window plus a black terminal.
+# Hide the host console (SW_HIDE = 0) AND detach from it with FreeConsole. FreeConsole matters on
+# Windows 11 where Windows Terminal is the default host: it ignores -WindowStyle Hidden and shows a
+# tab anyway, but detaching leaves it with no client so the tab closes.
+try { $cw = [CcmNative.Win32]::GetConsoleWindow(); if ($cw -ne [IntPtr]::Zero) { [void][CcmNative.Win32]::ShowWindow($cw, 0) } } catch {}
+try { [void][CcmNative.Win32]::FreeConsole() } catch {}
+
+# Make the NEXT launch console-free from the start: ship a tiny GUI-subsystem (wscript) launcher
+# and point the Desktop shortcut at it. wscript never allocates a console, so no terminal tab ever
+# flashes - the GUI just appears. Self-heals silently; a no-op once already set.
+try {
+    $vbsPath = Join-Path $PSScriptRoot 'ccm-launch.vbs'
+    $vbsBody = 'Set sh = CreateObject("WScript.Shell")' + "`r`n" +
+               'sh.Run "powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\ClaudeCodeManager\ClaudeCodeManager.ps1""", 0, False'
+    if (-not (Test-Path $vbsPath) -or ((Get-Content $vbsPath -Raw -ErrorAction SilentlyContinue) -ne $vbsBody)) {
+        [System.IO.File]::WriteAllText($vbsPath, $vbsBody, (New-Object System.Text.ASCIIEncoding))
+    }
+    $desk = [Environment]::GetFolderPath('Desktop')
+    $lnk  = Join-Path $desk 'Claude Code Manager.lnk'
+    $wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
+    if ((Test-Path $vbsPath) -and (Test-Path $wscript)) {
+        $ws = New-Object -ComObject WScript.Shell
+        $sc = $ws.CreateShortcut($lnk)
+        $wantArgs = '"' + $vbsPath + '"'
+        if ($sc.TargetPath -ne $wscript -or $sc.Arguments -ne $wantArgs) {
+            $sc.TargetPath = $wscript
+            $sc.Arguments  = $wantArgs
+            $sc.WorkingDirectory = $PSScriptRoot
+            $ico = Join-Path $PSScriptRoot 'ccm.ico'; if (Test-Path $ico) { $sc.IconLocation = $ico + ',0' }
+            $sc.Description = 'Add API keys, change models, switch provider'
+            $sc.Save()
+        }
+    }
+} catch {}
+
 function Broadcast-EnvChange {
     try { $r = [System.UIntPtr]::Zero; [void][CcmNative.Win32]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [IntPtr]::Zero, 'Environment', 2, 4000, [ref]$r) } catch {}
+}
+
+# Global hotkey listener (Ctrl+Alt+S) so a playing notification sound can be stopped from
+# anywhere without closing the Claude Code window. A tiny NativeWindow catches WM_HOTKEY.
+if (-not ([System.Management.Automation.PSTypeName]'CcmHotkeyWin.Listener').Type) {
+    try {
+        Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+namespace CcmHotkeyWin {
+  public class Listener : NativeWindow, IDisposable {
+    [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    public event Action Pressed;
+    const int WM_HOTKEY = 0x0312; int _id = 0x4343;
+    public Listener(uint mod, uint vk) { CreateHandle(new CreateParams()); RegisterHotKey(this.Handle, _id, mod, vk); }
+    protected override void WndProc(ref Message m) { if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == _id) { var p = Pressed; if (p != null) p(); } base.WndProc(ref m); }
+    public void Dispose() { try { UnregisterHotKey(this.Handle, _id); } catch {} try { DestroyHandle(); } catch {} }
+  }
+}
+'@
+    } catch {}
+}
+
+# Stop any notification sound that is currently playing (kills the detached player workers).
+function Stop-AllSounds {
+    try {
+        Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'" -ErrorAction SilentlyContinue |
+          Where-Object { $_.CommandLine -and $_.CommandLine -match 'ccm-notify' -and $_.CommandLine -match '\-Play' } |
+          ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
 }
 
 $PLACEHOLDER = 'PASTE_YOUR_DEEPSEEK_API_KEY_HERE'
@@ -48,7 +122,7 @@ $providers = @(
   @{ Name='MiniMax';             Kind='direct';     Base='https://api.minimax.io/anthropic';                   KeyEnv='MINIMAX_API_KEY';        ModelEnv='MINIMAX_MODEL';           Default='minimax-m2.7'; Models=@('minimax-m2.7','minimax-m2.5') },
   @{ Name='Anthropic (Claude)';  Kind='direct';     Base='https://api.anthropic.com';                          KeyEnv='ANTHROPIC_PROVIDER_KEY'; ModelEnv='ANTHROPIC_PROVIDER_MODEL';Default='claude-opus-4.7'; Models=@('claude-opus-4.7','claude-sonnet-4.6','claude-3.7-sonnet','claude-3.5-haiku') },
   @{ Name='OpenRouter';          Kind='openrouter'; Base=$OR_URL; KeyEnv='OPENROUTER_API_KEY'; ModelEnv='OPENROUTER_MODEL'; Default='deepseek/deepseek-chat'; Models=@('deepseek/deepseek-chat','qwen/qwen-2.5-coder-32b-instruct','anthropic/claude-3.5-sonnet','google/gemini-2.0-flash-exp:free','meta-llama/llama-3.3-70b-instruct') },
-  # ---- Native-key providers (use the provider's OWN key via a local LiteLLM proxy) ----
+  # ---- Native-key providers (use the provider's OWN key via a local claude-code-router proxy) ----
   @{ Name='Mistral (native key)';     Kind='proxy'; Base='https://api.mistral.ai/v1';          KeyEnv='MISTRAL_NATIVE_KEY';   ModelEnv='MISTRAL_NATIVE_MODEL';   Default='mistral-large-latest';   Models=@('mistral-large-latest','codestral-latest','mistral-medium-latest','mistral-small-latest','open-mistral-nemo') },
   @{ Name='OpenAI (native key)';      Kind='proxy'; Base='https://api.openai.com/v1';          KeyEnv='OPENAI_NATIVE_KEY';    ModelEnv='OPENAI_NATIVE_MODEL';    Default='gpt-4o';                 Models=@('gpt-4o','gpt-4.1','gpt-4o-mini','o4-mini','gpt-4.1-mini') },
   @{ Name='Groq (native key)';        Kind='proxy'; Base='https://api.groq.com/openai/v1';     KeyEnv='GROQ_NATIVE_KEY';      ModelEnv='GROQ_NATIVE_MODEL';      Default='llama-3.3-70b-versatile';Models=@('llama-3.3-70b-versatile','deepseek-r1-distill-llama-70b','qwen-2.5-coder-32b','moonshotai/kimi-k2-instruct') },
@@ -125,6 +199,9 @@ function Fetch-ORModels {
 
 # ---------- sound helpers ----------
 $SND = @{ 'Ping'='ping.wav'; 'Bell'='bell.wav'; 'Blip'='blip.wav'; 'Chime'='chime.wav' }
+# 'Rick Astley' is offered only when the (optional) bundled mp3 is present next to the app.
+$RickAvailable = (Test-Path $RickFile)
+if ($RickAvailable) { $SND['Rick Astley'] = 'rickroll.mp3' }
 function Resolve-Sound([string]$t) {
     if ([string]::IsNullOrWhiteSpace($t) -or $t -eq 'Off' -or $t -eq 'Custom file...') { return '' }
     if ($SND.ContainsKey($t)) { $p = Join-Path $SoundDir $SND[$t]; if (Test-Path $p) { return $p } else { return '' } }
@@ -211,8 +288,36 @@ function Set-SoundHooks([bool]$attnOn, [bool]$doneOn) {
         if ($on) { $existing += ,@{ hooks = @(@{ type='command'; command=$cmd }) } }
         if ($existing.Count -gt 0) { $h['hooks'][$name] = $existing } else { $h['hooks'].Remove($name) | Out-Null }
     }
-    (Write-CcmJson $h) | Set-Content -Path $file -Encoding UTF8
+    # UTF-8 without BOM (Set-Content -Encoding UTF8 adds a BOM that can break strict JSON readers).
+    [System.IO.File]::WriteAllText($file, (Write-CcmJson $h), (New-Object System.Text.UTF8Encoding($false)))
 }
+
+# Claude Code's settings.json can override env vars. A stale env.ANTHROPIC_BASE_URL or apiKeyHelper
+# (left by a previous router/gateway experiment) hijacks the endpoint -> "Unable to connect
+# (ConnectionRefused)" no matter what CCM sets. Strip those overrides at every launch (self-heal).
+function Clean-ClaudeSettings {
+    $file = Join-Path $env:USERPROFILE '.claude\settings.json'
+    if (-not (Test-Path $file)) { return }
+    try {
+        $raw = Get-Content $file -Raw -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return }
+        $h = ConvertTo-HashtableDeep ($raw | ConvertFrom-Json)
+        if ($null -eq $h) { return }
+        $changed = $false
+        if ($h.ContainsKey('apiKeyHelper')) { $h.Remove('apiKeyHelper') | Out-Null; $changed = $true }
+        if ($h.ContainsKey('env') -and $h['env'] -is [System.Collections.IDictionary]) {
+            foreach ($k in @('ANTHROPIC_BASE_URL','ANTHROPIC_API_BASE_URL','CLAUDE_AGENT_API_BASE_URL','CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_MODEL')) {
+                if ($h['env'].ContainsKey($k)) { $h['env'].Remove($k) | Out-Null; $changed = $true }
+            }
+            if ($h['env'].Count -eq 0) { $h.Remove('env') | Out-Null }
+        }
+        if ($changed) {
+            Copy-Item $file ($file + '.ccm-backup') -Force -ErrorAction SilentlyContinue
+            [System.IO.File]::WriteAllText($file, (Write-CcmJson $h), (New-Object System.Text.UTF8Encoding($false)))
+        }
+    } catch {}
+}
+
 function Play-Preview([string]$path) {
     if ([string]::IsNullOrWhiteSpace($path)) { return }
     try {
@@ -350,7 +455,7 @@ $grpN.Text = 'Notifications (optional)'; $grpN.Font = $fontN; $grpN.Size = New-O
 $form.Controls.Add($grpN)
 
 $lblNDesc = New-Object System.Windows.Forms.Label
-$lblNDesc.Text = 'Play a sound when Claude Code needs you or finishes - handy when you are not watching. Leave on Off to keep it silent.'
+$lblNDesc.Text = 'Play a sound when Claude Code needs you or finishes - handy when you are not watching. Off = silent. A sound also stops when you close its Claude Code window, or press Ctrl+Alt+S anytime to stop it.'
 $lblNDesc.Font = $fontS; $lblNDesc.ForeColor = [System.Drawing.Color]::Gray; $lblNDesc.AutoSize = $true; $lblNDesc.MaximumSize = New-Object System.Drawing.Size(444,0); $lblNDesc.Location = New-Object System.Drawing.Point(12,20)
 $grpN.Controls.Add($lblNDesc)
 
@@ -359,7 +464,8 @@ $lblAttn.Text = 'When Claude asks / needs you:'; $lblAttn.Font = $fontN; $lblAtt
 $grpN.Controls.Add($lblAttn)
 $cboAttn = New-Object System.Windows.Forms.ComboBox
 $cboAttn.DropDownStyle = 'DropDown'; $cboAttn.Font = $fontN; $cboAttn.Size = New-Object System.Drawing.Size(150,24); $cboAttn.Location = New-Object System.Drawing.Point(214,49)
-foreach ($o in @('Off','Ping','Bell','Blip','Chime','Custom file...')) { [void]$cboAttn.Items.Add($o) }
+$attnItems = @('Off','Ping','Bell','Blip','Chime'); if ($RickAvailable) { $attnItems += 'Rick Astley' }; $attnItems += 'Custom file...'
+foreach ($o in $attnItems) { [void]$cboAttn.Items.Add($o) }
 $grpN.Controls.Add($cboAttn)
 $btnAttnPrev = New-Object System.Windows.Forms.Button
 $btnAttnPrev.Text = 'Preview'; $btnAttnPrev.Font = $fontS; $btnAttnPrev.Size = New-Object System.Drawing.Size(78,24); $btnAttnPrev.Location = New-Object System.Drawing.Point(372,49)
@@ -370,7 +476,8 @@ $lblDone.Text = 'When a task finishes:'; $lblDone.Font = $fontN; $lblDone.AutoSi
 $grpN.Controls.Add($lblDone)
 $cboDone = New-Object System.Windows.Forms.ComboBox
 $cboDone.DropDownStyle = 'DropDown'; $cboDone.Font = $fontN; $cboDone.Size = New-Object System.Drawing.Size(150,24); $cboDone.Location = New-Object System.Drawing.Point(214,79)
-foreach ($o in @('Off','Chime','Ping','Bell','Blip','Custom file...')) { [void]$cboDone.Items.Add($o) }
+$doneItems = @('Off','Chime','Ping','Bell','Blip'); if ($RickAvailable) { $doneItems += 'Rick Astley' }; $doneItems += 'Custom file...'
+foreach ($o in $doneItems) { [void]$cboDone.Items.Add($o) }
 $grpN.Controls.Add($cboDone)
 $btnDonePrev = New-Object System.Windows.Forms.Button
 $btnDonePrev.Text = 'Preview'; $btnDonePrev.Font = $fontS; $btnDonePrev.Size = New-Object System.Drawing.Size(78,24); $btnDonePrev.Location = New-Object System.Drawing.Point(372,79)
@@ -379,8 +486,12 @@ $grpN.Controls.Add($btnDonePrev)
 $btnSaveSnd = New-Object System.Windows.Forms.Button
 $btnSaveSnd.Text = 'Save sound settings'; $btnSaveSnd.Font = $fontB; $btnSaveSnd.Size = New-Object System.Drawing.Size(180,28); $btnSaveSnd.Location = New-Object System.Drawing.Point(12,112); $btnSaveSnd.BackColor = [System.Drawing.Color]::White
 $grpN.Controls.Add($btnSaveSnd)
+$btnStopSnd = New-Object System.Windows.Forms.Button
+$btnStopSnd.Text = 'Stop sound'; $btnStopSnd.Font = $fontS; $btnStopSnd.Size = New-Object System.Drawing.Size(96,28); $btnStopSnd.Location = New-Object System.Drawing.Point(360,112)
+$btnStopSnd.Add_Click({ Stop-AllSounds }) | Out-Null
+$grpN.Controls.Add($btnStopSnd)
 $lblSndState = New-Object System.Windows.Forms.Label
-$lblSndState.Font = $fontN; $lblSndState.AutoSize = $true; $lblSndState.MaximumSize = New-Object System.Drawing.Size(260,0); $lblSndState.Location = New-Object System.Drawing.Point(200,118)
+$lblSndState.Font = $fontN; $lblSndState.AutoSize = $true; $lblSndState.MaximumSize = New-Object System.Drawing.Size(150,0); $lblSndState.Location = New-Object System.Drawing.Point(200,118)
 $grpN.Controls.Add($lblSndState)
 
 $lblOverT = New-Object System.Windows.Forms.Label
@@ -430,16 +541,16 @@ function Load-Provider {
             $b = Get-UserVar 'OAICOMPAT_BASE_URL'; $txtBase.Text = $(if ($b) { $b } else { '' })
             $lblBaseTitle.Text = 'Provider base URL (OpenAI-compatible, ends in /v1). Examples: ' + ($ProxyPresets -join '   ')
             $lblKind.ForeColor = $green
-            $lblKind.Text = 'Type: Native key via local LiteLLM proxy - use this provider''s OWN key. Proxy runs only while active; first launch installs LiteLLM (needs Python).'
+            $lblKind.Text = 'Type: Native key via local claude-code-router (Node) - use this provider''s OWN key. Proxy runs only while active; first launch sets it up (needs Node.js).'
             $lblKey.Text = 'Provider API key (native)'
         }
     } elseif ($p.Kind -eq 'proxy') {
         # named native-key preset: fixed endpoint, own key (like a direct provider, but proxied)
         $lblBaseTitle.Visible = $false; $txtBase.Visible = $false
         $lblEnd.Visible = $true; $lblKind.Visible = $true
-        $lblEnd.Text = 'Endpoint: ' + $p.Base + '  (native key via local LiteLLM proxy)'
+        $lblEnd.Text = 'Endpoint: ' + $p.Base + '  (native key via local claude-code-router)'
         $lblKind.ForeColor = $green
-        $lblKind.Text = 'Type: Native key - uses THIS provider''s own API key via a local proxy (installed on first launch; needs Python 3.10+). Proxy runs only while active.'
+        $lblKind.Text = 'Type: Native key - uses THIS provider''s own API key via a local claude-code-router proxy (set up once on first launch; needs Node.js). Proxy runs only while active.'
         $lblKey.Text = if ($p.Name -like 'Ollama*') { 'API key (any value works for local Ollama, e.g. ollama)' } else { 'API key (native)' }
     } else {
         $lblBaseTitle.Visible = $false; $txtBase.Visible = $false
@@ -603,6 +714,7 @@ $btnClear.Add_Click({
 
 # Apply env for a provider that talks Anthropic directly (direct/openrouter/custom).
 function Apply-AnthropicEnv($p, $base, $authKey, $model, $useXApiKey) {
+    Clean-ClaudeSettings   # strip any stale settings.json override that would cause ConnectionRefused
     $maxOut = if ($base -like '*openrouter.ai*') { if ($model -match ':free') { '4096' } else { '8000' } } else { '32000' }
     $haiku = if ($p.Name -like 'DeepSeek*') { 'deepseek-v4-flash' } else { $model }
     Set-UserVar 'ANTHROPIC_BASE_URL' $base
@@ -630,20 +742,20 @@ function Apply-AnthropicEnv($p, $base, $authKey, $model, $useXApiKey) {
 # Custom auth scheme: remember whether x-api-key or Bearer worked (default Bearer).
 function Get-CustomScheme { $s = Get-UserVar 'CUSTOM_AUTH_SCHEME'; if ($s -eq 'xapikey') { return 'xapikey' } else { return 'bearer' } }
 
-# Start the native-key proxy; if LiteLLM isn't set up yet, offer a ONE-TIME install (never on
-# every launch, never hangs - the install is time-boxed). Returns the Start-CcmProxy result.
+# Start the native-key proxy; if claude-code-router isn't set up yet, offer a ONE-TIME install
+# (never on every launch, never hangs - the install is time-boxed). Returns the Start-CcmProxy result.
 function Start-ProxyWithSetup($base, $key, $model) {
     $r = Start-CcmProxy -Base $base -Key $key -Model $model
     if ($r.Ok) { return $r }
     if ($r.NeedInstall) {
-        $ans = [System.Windows.Forms.MessageBox]::Show(($r.Msg + "`n`nNative-key providers use a small local proxy (LiteLLM). It installs ONCE - not on every launch. Set it up now? (needs Python 3.10-3.12; may take a minute)"),'Claude Code Manager',4,32)
+        $ans = [System.Windows.Forms.MessageBox]::Show(($r.Msg + "`n`nNative-key providers use a small local proxy (claude-code-router). It installs ONCE - not on every launch. Set it up now? (needs Node.js; takes a few seconds)"),'Claude Code Manager',4,32)
         if ($ans -ne 'Yes') { return @{ Ok=$false; Msg='Setup skipped.' } }
-        $lblState.ForeColor = $blue; $lblState.Text = 'setting up LiteLLM (one-time)...'; $form.Refresh()
+        $lblState.ForeColor = $blue; $lblState.Text = 'setting up claude-code-router (one-time)...'; $form.Refresh()
         try { $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor } catch {}
-        $ins = Install-LiteLLM
+        $ins = Install-Ccr
         try { $form.Cursor = [System.Windows.Forms.Cursors]::Default } catch {}
         if (-not $ins.Ok) { [System.Windows.Forms.MessageBox]::Show($ins.Msg,'Claude Code Manager',0,48) | Out-Null; return @{ Ok=$false; Msg=$ins.Msg } }
-        $lblState.ForeColor = $blue; $lblState.Text = 'LiteLLM ready - starting proxy...'; $form.Refresh()
+        $lblState.ForeColor = $blue; $lblState.Text = 'router ready - starting...'; $form.Refresh()
         return (Start-CcmProxy -Base $base -Key $key -Model $model)
     }
     return $r
@@ -846,6 +958,18 @@ $btnStopProxy.Add_Click({
     Refresh-Overview
 })
 
+# Sounds are OFF by default - nothing plays unless the user picks a sound. Rick Astley (when the
+# mp3 is present) is just one of the selectable options. An earlier build auto-set it as the
+# first-run default; undo that ONCE for anyone who got it, so they start clean.
+if ((Get-UserVar 'CCM_SOUND_INIT') -eq '1') {
+    if ((Get-UserVar 'CCM_SOUND_ATTENTION') -eq $RickFile -or (Get-UserVar 'CCM_SOUND_DONE') -eq $RickFile) {
+        Set-UserVar 'CCM_SOUND_ATTENTION' ''
+        Set-UserVar 'CCM_SOUND_DONE'      ''
+        try { Set-SoundHooks $false $false } catch {}
+    }
+    Set-UserVar 'CCM_SOUND_INIT' '2'
+}
+
 # initial sound combos from saved env
 $cboAttn.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_ATTENTION')
 $cboDone.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_DONE')
@@ -858,9 +982,22 @@ $combo.SelectedIndex = $startIdx
 Load-Provider
 Refresh-Overview
 # If we're not resuming on a native-key provider, stop any leftover proxy from a previous session
-# (so LiteLLM/python isn't running in the background for providers that don't need it).
+# (so the router isn't running in the background for providers that don't need it).
 try { if ($providers[$startIdx].Kind -ne 'proxy') { $st = Get-CcmProxyStatus; if ($st.Running) { Stop-CcmProxy } } } catch {}
+
+# Register the global "stop sound" hotkey (Ctrl+Alt+S) for the life of the window.
+# MOD_ALT=0x1, MOD_CONTROL=0x2 => 0x3 ; VK_S = 0x53.
+$script:ccmHotkey = $null
+try {
+    if (([System.Management.Automation.PSTypeName]'CcmHotkeyWin.Listener').Type) {
+        $script:ccmHotkey = New-Object CcmHotkeyWin.Listener ([uint32]3, [uint32]0x53)
+        $script:ccmHotkey.add_Pressed({ Stop-AllSounds })
+    }
+} catch {}
+
 [void]$form.ShowDialog()
+
+try { if ($script:ccmHotkey) { $script:ccmHotkey.Dispose() } } catch {}
 
 } catch {
     try { Add-Type -AssemblyName System.Windows.Forms } catch {}

@@ -20,3 +20,6 @@ desktop.ini
 *.key
 secrets.*
 config.local.*
+
+# Optional user-supplied default sound (copyrighted; installed locally only, never in the repo)
+assets/sounds/rickroll.mp3

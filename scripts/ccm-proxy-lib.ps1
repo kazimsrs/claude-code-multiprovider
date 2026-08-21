@@ -1,15 +1,14 @@
 # ============================================================
-#  ccm-proxy-lib.ps1 — LiteLLM local-proxy management for CCM.
-#  Dot-sourced by ClaudeCodeManager.ps1. Provides:
-#     Ensure-LiteLLM         : install/repair litellm[proxy], return status object
-#     Write-ProxyConfig      : write the validated LiteLLM config for a provider
-#     Start-CcmProxy         : (re)start the local proxy, wait for health
-#     Stop-CcmProxy          : stop the tracked proxy
-#     Get-CcmProxyStatus     : is a proxy running + on which port
-#  The proxy translates Anthropic <-> OpenAI Chat Completions so Claude Code can
-#  drive ANY OpenAI-compatible provider with that provider's OWN key. It binds to
-#  127.0.0.1 only and runs ONLY while a native-key provider is active.
+#  ccm-proxy-lib.ps1 — native-key routing for CCM via claude-code-router (CCR).
+#  Dot-sourced by ClaudeCodeManager.ps1. CCR is a lightweight Node.js proxy purpose-built for
+#  Claude Code that translates Anthropic <-> OpenAI Chat Completions, so Claude Code can drive
+#  ANY OpenAI-compatible provider (Mistral, OpenAI, Groq, ...) with that provider's OWN key.
+#  It replaces the previous Python/LiteLLM approach: lighter, faster to start, and it manages its
+#  own background service (survives the Manager closing). Gateway: http://127.0.0.1:3456.
 # ============================================================
+
+$CCR_PORT = 3456
+$CCR_BASE = "http://127.0.0.1:$CCR_PORT"
 
 function Get-CcmDataDir {
   $d = Join-Path $env:LOCALAPPDATA 'CCM'
@@ -17,193 +16,182 @@ function Get-CcmDataDir {
   return $d
 }
 
-function Find-Python {
-  # Prefer Python 3.10-3.12 (LiteLLM installs cleanly there). Newer builds (e.g. 3.13/3.14
-  # from the Microsoft Store) often lack prebuilt wheels for LiteLLM's deps and hang on pip.
-  # Fall back to any Python only if no ideal version exists.
-  # NOTE: use ONLY single quotes in this Python snippet. Windows PowerShell mangles
-  # embedded double-quotes when passing native-command args, which made every probe
-  # fail and the app wrongly report "Python not found".
-  $probe = "import sys;print('%d.%d'%sys.version_info[:2]);print(sys.executable)"
-  $cands = @(@('py','-3.12'),@('py','-3.11'),@('py','-3.10'),@('python',''),@('python3',''),@('py','-3'))
-  $fallback = $null
-  foreach ($c in $cands) {
-    $exe = $c[0]; $verArg = $c[1]
-    $g = Get-Command $exe -ErrorAction SilentlyContinue
-    if (-not $g) { continue }
-    try {
-      $a = @(); if ($verArg) { $a += $verArg }
-      $a += @('-c', $probe)
-      $out = & $g.Source @a 2>$null
-      if ($out -and @($out).Count -ge 2) {
-        $ver = @($out)[0]; $path = @($out)[1]
-        if ($ver -match '^(\d+)\.(\d+)$') {
-          $maj = [int]$Matches[1]; $min = [int]$Matches[2]
-          if ($maj -eq 3 -and $min -ge 10 -and $min -le 12 -and (Test-Path $path)) { return $path }
-          if (-not $fallback -and (Test-Path $path)) { $fallback = $path }
-        }
-      }
-    } catch {}
-  }
-  return $fallback
+# Return the path to npm.cmd specifically. The extension MATTERS: CreateProcess (which
+# Start-Process uses whenever output is redirected) cannot execute a batch file or the
+# extensionless npm shim - it fails with "%1 is not a valid Win32 application". We must
+# hand a real .cmd to cmd.exe, so always resolve the .cmd here.
+function Find-Npm {
+  $cands = @()
+  $g = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if ($g -and $g.Source) { $cands += $g.Source }
+  $g2 = Get-Command npm -ErrorAction SilentlyContinue
+  if ($g2 -and $g2.Source -match '\.cmd$') { $cands += $g2.Source }
+  $cands += (Join-Path $env:APPDATA 'npm\npm.cmd')
+  $cands += (Join-Path $env:ProgramFiles 'nodejs\npm.cmd')
+  $cands += (Join-Path ${env:ProgramFiles(x86)} 'nodejs\npm.cmd')
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { return $c } }
+  return $null
 }
 
-function Get-PyVersion($py) { try { return (& $py -c "import sys;print('%d.%d'%sys.version_info[:2])" 2>$null) } catch { return '' } }
-
-# True if litellm's proxy is importable with this Python.
-function Test-LiteLLM($py) {
-  if (-not $py) { return $false }
-  try { $r = & $py -c "from litellm.proxy import proxy_server; print('OK')" 2>$null; return ($r -match 'OK') } catch { return $false }
+function Find-Ccr {
+  $cands = @()
+  $g = Get-Command ccr.cmd -ErrorAction SilentlyContinue
+  if ($g -and $g.Source) { $cands += $g.Source }
+  $g2 = Get-Command ccr -ErrorAction SilentlyContinue
+  if ($g2 -and $g2.Source -match '\.(cmd|exe)$') { $cands += $g2.Source }
+  $cands += (Join-Path $env:APPDATA 'npm\ccr.cmd')
+  foreach ($c in $cands) { if ($c -and (Test-Path $c)) { return $c } }
+  return $null
 }
 
-# Run a pip command TIME-BOXED so it can never hang the app (the failure mode on Python 3.13/3.14).
-function Invoke-PipInstall($py, [string]$argString, [string]$log, [int]$timeoutSec) {
+# Run a .cmd/.bat reliably with output redirection + a PassThru process handle.
+# Start-Process cannot exec a batch file directly under redirection (CreateProcess:
+# "%1 is not a valid Win32 application"), so we invoke it THROUGH cmd.exe. The
+# '/s /c "<full>"' form makes cmd strip only the outermost quotes and run the rest
+# verbatim, so a batch path containing spaces is handled correctly.
+function Start-BatchProc([string]$batch, [string]$argline, [string]$outLog, [string]$errLog) {
+  $full = '/s /c ""' + $batch + '" ' + $argline + '"'
+  return Start-Process -FilePath $env:ComSpec -ArgumentList $full -PassThru -NoNewWindow -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+}
+
+function Test-Ccr { return ((Find-Ccr) -ne $null) }
+
+# CHECK ONLY (used on the Launch path) - never installs, so a click can't hang.
+# Returns @{ Ok; NeedInstall; Msg }.
+function Ensure-Ccr {
+  if (Test-Ccr) { return @{ Ok=$true; Msg='ready' } }
+  if (-not (Find-Npm)) { return @{ Ok=$false; NeedInstall=$true; Msg='Node.js not found. Install Node.js LTS from nodejs.org (adds npm to PATH), then set up native providers.' } }
+  return @{ Ok=$false; NeedInstall=$true; Msg='claude-code-router is not set up yet.' }
+}
+
+# One-time installer for native-provider support. Time-boxed. Returns @{ Ok; Msg }.
+function Install-Ccr([int]$TimeoutSec = 300) {
+  $npm = Find-Npm
+  if (-not $npm) { return @{ Ok=$false; Msg='Node.js not found. Install Node.js LTS from nodejs.org (tick "Add to PATH"), then retry.' } }
+  if (Test-Ccr) { return @{ Ok=$true; Msg='Already installed.' } }
+  $log = Join-Path (Get-CcmDataDir) 'ccr_install.log'
+  # Pin the 1.x line: simple, headless config.json (Providers/Router). 3.x is UI-driven.
+  # npm is a .cmd, so run it THROUGH cmd.exe (see Start-BatchProc) - a direct Start-Process
+  # on npm.cmd under redirection fails with "%1 is not a valid Win32 application".
   try {
-    $proc = Start-Process -FilePath $py -ArgumentList $argString -PassThru -WindowStyle Hidden -RedirectStandardOutput $log -RedirectStandardError ($log + '.err')
-    if (-not $proc.WaitForExit($timeoutSec * 1000)) { try { $proc.Kill() } catch {}; return $false }
-    return ($proc.ExitCode -eq 0)
-  } catch { return $false }
+    $proc = Start-BatchProc $npm 'install -g @musistudio/claude-code-router@1.0.73' $log ($log + '.err')
+    if (-not $proc.WaitForExit($TimeoutSec * 1000)) { try { $proc.Kill() } catch {}; return @{ Ok=$false; Msg='npm install timed out.' } }
+  } catch { return @{ Ok=$false; Msg=("npm install failed: " + $_.Exception.Message) } }
+  if (Test-Ccr) { return @{ Ok=$true; Msg='claude-code-router installed.' } }
+  $tail = ''
+  try { $tail = ((Get-Content ($log + '.err') -Tail 4 -ErrorAction SilentlyContinue) -join ' | ').Trim() } catch {}
+  if (-not $tail) { try { $tail = ((Get-Content $log -Tail 4 -ErrorAction SilentlyContinue) -join ' | ').Trim() } catch {} }
+  return @{ Ok=$false; Msg=("Could not install claude-code-router. " + $tail + " (full log: " + $log + ")") }
 }
 
-# CHECK ONLY - never installs. Used on the Launch path so a click never triggers a hang.
-# Returns @{ Ok; Python; NeedInstall; Msg }.
-function Ensure-LiteLLM {
-  $py = Find-Python
-  if (-not $py) { return @{ Ok=$false; Python=$null; NeedInstall=$true; Msg='No suitable Python found. Install Python 3.10-3.12 from python.org (tick "Add to PATH"), then set up native providers.' } }
-  if (Test-LiteLLM $py) { return @{ Ok=$true; Python=$py; Msg='ready' } }
-  return @{ Ok=$false; Python=$py; NeedInstall=$true; Msg=('LiteLLM is not set up yet (Python ' + (Get-PyVersion $py) + ').') }
+function ConvertTo-JsonStr($s) {
+  $t = [string]$s
+  $t = $t.Replace('\', '\\'); $t = $t.Replace('"', '\"')
+  return $t
 }
 
-# One-time installer for native-provider support. Time-boxed; safe to call from setup or a button.
-# Returns @{ Ok; Python; Msg }.
-function Install-LiteLLM([int]$TimeoutSec = 420) {
-  $py = Find-Python
-  if (-not $py) { return @{ Ok=$false; Msg='No suitable Python (3.10-3.12) found. Install Python 3.12 from python.org (tick "Add to PATH"), then retry.' } }
-  if (Test-LiteLLM $py) { return @{ Ok=$true; Python=$py; Msg='Already installed.' } }
-  $pv = Get-PyVersion $py
-  $log = Join-Path (Get-CcmDataDir) 'litellm_install.log'
-  # 1) install litellm[proxy]
-  [void](Invoke-PipInstall $py '-m pip install --upgrade "litellm[proxy]"' $log $TimeoutSec)
-  if (Test-LiteLLM $py) { return @{ Ok=$true; Python=$py; Msg=("LiteLLM installed (Python " + $pv + ").") } }
-  # 2) FastAPI compatibility pin (litellm proxy imports get_flat_dependant, removed in newer FastAPI)
-  [void](Invoke-PipInstall $py '-m pip install "fastapi<0.113"' $log 180)
-  if (Test-LiteLLM $py) { return @{ Ok=$true; Python=$py; Msg=("LiteLLM installed (Python " + $pv + ").") } }
-  return @{ Ok=$false; Python=$py; Msg=("Could not install LiteLLM on Python " + $pv + ". If this is Python 3.13/3.14, install Python 3.12 from python.org (tick 'Add to PATH') and retry - LiteLLM has no prebuilt packages for the newest Python yet. Details: " + $log) }
-}
-
-function Write-ProxyConfig([string]$Base, [string]$Model) {
-  # $Base = provider OpenAI-compatible base (…/v1). Model passes through via wildcard,
-  # so the model Claude Code requests (ANTHROPIC_MODEL) is what the provider receives.
-  $dir = Get-CcmDataDir
-  $cfg = Join-Path $dir 'litellm_config.yaml'
+# Write CCR's config.json for a single native provider. Model routes through the "ccm" provider.
+function Write-CcrConfig([string]$Base, [string]$Key, [string]$Model) {
+  $dir = Join-Path $env:USERPROFILE '.claude-code-router'
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $cfg = Join-Path $dir 'config.json'
   $b = $Base.Trim().TrimEnd('/')
-  $yaml = @"
-# Auto-generated by CCM. Do not edit; CCM overwrites this on each launch.
-model_list:
-  - model_name: "*"
-    litellm_params:
-      model: "openai/*"
-      api_base: "$b"
-      api_key: "os.environ/CCM_PROXY_UPSTREAM_KEY"
-litellm_settings:
-  use_chat_completions_url_for_anthropic_messages: true
-  drop_params: true
+  if ($b -notmatch '/chat/completions$') {
+    if ($b -match '/v1$') { $b = $b + '/chat/completions' } else { $b = $b + '/v1/chat/completions' }
+  }
+  $bE = ConvertTo-JsonStr $b; $kE = ConvertTo-JsonStr $Key; $mE = ConvertTo-JsonStr $Model
+
+  # Claude Code sends its system prompt as an ARRAY of text blocks (with cache_control).
+  # Strict OpenAI-compatible providers (Mistral, etc.) require the system message content to
+  # be a STRING, and return HTTP 422 otherwise. ccm-normalize.js (shipped next to this lib)
+  # flattens it. Wire it in only when present, so a partial install still writes a valid config.
+  $normJs = Join-Path $PSScriptRoot 'ccm-normalize.js'
+  $transformersTop = ''
+  $providerXf = ''
+  if (Test-Path $normJs) {
+    $njE = ConvertTo-JsonStr $normJs
+    $transformersTop = "`n  ""transformers"": [ { ""path"": ""$njE"" } ],"
+    $providerXf = ",`n      ""transformer"": { ""use"": [""ccmnormalize""] }"
+  }
+
+  # Built as literal JSON (deterministic; avoids PowerShell's single-element-array unwrapping).
+  $json = @"
+{
+  "LOG": false,
+  "HOST": "127.0.0.1",
+  "PORT": $CCR_PORT,
+  "API_TIMEOUT_MS": 600000,$transformersTop
+  "Providers": [
+    {
+      "name": "ccm",
+      "api_base_url": "$bE",
+      "api_key": "$kE",
+      "models": ["$mE"]$providerXf
+    }
+  ],
+  "Router": {
+    "default": "ccm,$mE",
+    "background": "ccm,$mE",
+    "think": "ccm,$mE",
+    "longContext": "ccm,$mE",
+    "webSearch": "ccm,$mE"
+  }
+}
 "@
-  Set-Content -Path $cfg -Value $yaml -Encoding UTF8
+  # UTF-8 without BOM (a BOM breaks JSON/YAML parsers on Windows).
+  [System.IO.File]::WriteAllText($cfg, $json, (New-Object System.Text.UTF8Encoding($false)))
   return $cfg
 }
 
-function Get-FreePort([int]$start = 4000) {
-  for ($p = $start; $p -lt ($start+40); $p++) {
-    $inUse = $false
-    try {
-      $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $p)
-      $l.Start(); $l.Stop()
-    } catch { $inUse = $true }
-    if (-not $inUse) { return $p }
-  }
-  return $start
-}
-
-function Stop-CcmProxy {
-  $dir = Get-CcmDataDir
-  $pidFile = Join-Path $dir 'proxy.pid'
-  if (Test-Path $pidFile) {
-    $old = (Get-Content $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($old -match '^\d+$') {
-      try {
-        $proc = Get-Process -Id ([int]$old) -ErrorAction SilentlyContinue
-        if ($proc -and ($proc.ProcessName -match 'python|litellm')) { Stop-Process -Id ([int]$old) -Force -ErrorAction SilentlyContinue }
-      } catch {}
-    }
-    Remove-Item $pidFile -ErrorAction SilentlyContinue
-  }
-}
-
 function Get-CcmProxyStatus {
-  $dir = Get-CcmDataDir
-  $pidFile = Join-Path $dir 'proxy.pid'; $portFile = Join-Path $dir 'proxy.port'
-  if ((Test-Path $pidFile) -and (Test-Path $portFile)) {
-    $pp = (Get-Content $pidFile | Select-Object -First 1); $port = (Get-Content $portFile | Select-Object -First 1)
-    if ($pp -match '^\d+$' -and (Get-Process -Id ([int]$pp) -ErrorAction SilentlyContinue)) {
-      return @{ Running=$true; Pid=[int]$pp; Port=[int]$port }
-    }
-  }
+  try {
+    $r = Invoke-WebRequest -Uri "$CCR_BASE/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+    if ($r.StatusCode -eq 200) { return @{ Running=$true; Port=$CCR_PORT } }
+  } catch {}
   return @{ Running=$false }
 }
 
-# Returns @{ Ok=$bool; Port=<int>; Base=<url>; Msg=<string>; NeedInstall=<bool> }
-# CHECK only - never installs here, so a Launch click can never hang on pip.
+function Stop-CcmProxy {
+  $ccr = Find-Ccr
+  if ($ccr) { try { & $ccr stop 2>&1 | Out-Null } catch {} }
+}
+
+# (Re)start the router with a fresh config for this provider. CHECK only for install - never
+# installs here (a Launch click can't hang). Returns @{ Ok; Port; Base; Msg; NeedInstall }.
 function Start-CcmProxy([string]$Base, [string]$Key, [string]$Model) {
-  $ens = Ensure-LiteLLM
+  $ens = Ensure-Ccr
   if (-not $ens.Ok) { return @{ Ok=$false; NeedInstall=$ens.NeedInstall; Msg=$ens.Msg } }
-  $py = $ens.Python
-  Stop-CcmProxy
+  $ccr = Find-Ccr
+  Write-CcrConfig -Base $Base -Key $Key -Model $Model | Out-Null
   $dir = Get-CcmDataDir
-  $cfg = Write-ProxyConfig -Base $Base -Model $Model
-  $port = Get-FreePort 4000
-  $log = Join-Path $dir 'litellm.log'
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $py
-  # Launch the proxy via the proxy CLI module. NOTE: 'python -m litellm' FAILS ('litellm' is a
-  # package with no __main__); the working invocation is 'python -m litellm.proxy.proxy_cli'.
-  $psi.Arguments = "-m litellm.proxy.proxy_cli --config `"$cfg`" --host 127.0.0.1 --port $port --num_workers 1"
-  $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  $psi.WorkingDirectory = $dir
-  $psi.EnvironmentVariables['CCM_PROXY_UPSTREAM_KEY'] = $Key
-  # keep provider key out of Claude Code's own auth path
+  $log = Join-Path $dir 'ccr.log'; $errLog = Join-Path $dir 'ccr.err.log'
+  Remove-Item $log, $errLog -ErrorAction SilentlyContinue
+  # 'restart' reloads the new config (stop if running, then start the detached daemon).
+  # ccr is a .cmd, so go through cmd.exe (see Start-BatchProc) - a direct Start-Process
+  # on ccr.cmd under redirection fails with "%1 is not a valid Win32 application".
   try {
-    $proc = [System.Diagnostics.Process]::Start($psi)
+    $proc = Start-BatchProc $ccr 'restart' $log $errLog
+    $proc.WaitForExit(30000) | Out-Null
   } catch {
-    return @{ Ok=$false; Msg=("Could not start proxy: " + $_.Exception.Message) }
+    return @{ Ok=$false; Msg=("Could not start claude-code-router: " + $_.Exception.Message) }
   }
-  Set-Content -Path (Join-Path $dir 'proxy.pid')  -Value $proc.Id
-  Set-Content -Path (Join-Path $dir 'proxy.port') -Value $port
-  # drain output to log asynchronously so the pipe never blocks the child
-  Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action { if ($EventArgs.Data) { Add-Content -Path (Join-Path (Join-Path $env:LOCALAPPDATA 'CCM') 'litellm.log') -Value $EventArgs.Data } } | Out-Null
-  Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived  -Action { if ($EventArgs.Data) { Add-Content -Path (Join-Path (Join-Path $env:LOCALAPPDATA 'CCM') 'litellm.log') -Value $EventArgs.Data } } | Out-Null
-  try { $proc.BeginOutputReadLine(); $proc.BeginErrorReadLine() } catch {}
-
-  # health poll
-  $base = "http://127.0.0.1:$port"
+  # health poll (allow for a cold Node start on first run)
   $ready = $false
-  for ($i = 0; $i -lt 40; $i++) {
-    if ($proc.HasExited) { break }
+  for ($i = 0; $i -lt 90; $i++) {
     try {
-      $resp = Invoke-WebRequest -Uri "$base/health/readiness" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-      if ($resp.StatusCode -eq 200) { $ready = $true; break }
+      $r = Invoke-WebRequest -Uri "$CCR_BASE/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+      if ($r.StatusCode -eq 200) { $ready = $true; break }
     } catch {}
-    Start-Sleep -Milliseconds 750
+    Start-Sleep -Milliseconds 700
   }
   if (-not $ready) {
     $tail = ''
-    try { $tail = (Get-Content $log -Tail 6 -ErrorAction SilentlyContinue) -join ' | ' } catch {}
-    Stop-CcmProxy
-    return @{ Ok=$false; Msg=("Proxy did not become ready. " + $tail) }
+    try {
+      $e = (Get-Content $errLog -Tail 5 -ErrorAction SilentlyContinue) -join ' | '
+      $o = (Get-Content $log -Tail 3 -ErrorAction SilentlyContinue) -join ' | '
+      $tail = ($e + ' ' + $o).Trim()
+    } catch {}
+    return @{ Ok=$false; Msg=("Router did not become ready. " + $tail) }
   }
-  return @{ Ok=$true; Port=$port; Base=$base; Msg='Proxy ready' }
+  return @{ Ok=$true; Port=$CCR_PORT; Base=$CCR_BASE; Msg='Router ready' }
 }

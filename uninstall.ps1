@@ -17,14 +17,14 @@ foreach ($n in 'Claude Code.lnk','Claude Code Manager.lnk') {
 $app = Join-Path $env:LOCALAPPDATA 'ClaudeCodeManager'
 if (Test-Path $app) { Remove-Item $app -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '  Removed Manager app folder' }
 
-# Stop + remove the local LiteLLM proxy data (pid/port/config/log)
+# Stop the local claude-code-router and remove CCM proxy data
+$ccr = Get-Command ccr -ErrorAction SilentlyContinue
+if (-not $ccr) { $c = Join-Path $env:APPDATA 'npm\ccr.cmd'; if (Test-Path $c) { $ccr = $c } }
+if ($ccr) { try { & $ccr stop 2>&1 | Out-Null; Write-Host '  Stopped claude-code-router' } catch {} }
 $ccmData = Join-Path $env:LOCALAPPDATA 'CCM'
-$pidFile = Join-Path $ccmData 'proxy.pid'
-if (Test-Path $pidFile) {
-    $pp = (Get-Content $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($pp -match '^\d+$') { try { Stop-Process -Id ([int]$pp) -Force -ErrorAction SilentlyContinue } catch {} }
-}
-if (Test-Path $ccmData) { Remove-Item $ccmData -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '  Stopped proxy + removed CCM data folder' }
+if (Test-Path $ccmData) { Remove-Item $ccmData -Recurse -Force -ErrorAction SilentlyContinue; Write-Host '  Removed CCM data folder' }
+# Note: claude-code-router itself (npm global) and its config are left in place; remove with:
+#   npm uninstall -g @musistudio/claude-code-router   (and delete %USERPROFILE%\.claude-code-router)
 
 # Remove CCM sound hooks from Claude Code settings.json (leave other settings intact)
 function _EscJ($s){ $t=[string]$s; $t=$t.Replace('\','\\'); $t=$t.Replace('"','\"'); $t=$t.Replace("`r",'\r'); $t=$t.Replace("`n",'\n'); $t=$t.Replace("`t",'\t'); return '"'+$t+'"' }
@@ -70,7 +70,7 @@ $vars = @(
   'MINIMAX_API_KEY','MINIMAX_MODEL','ANTHROPIC_PROVIDER_KEY','ANTHROPIC_PROVIDER_MODEL',
   'OPENROUTER_API_KEY','OPENROUTER_MODEL','NEMOTRON_MODEL','GEMINI_API_KEY','GEMINI_MODEL','OPENAI_MODEL','XAI_MODEL','MISTRAL_MODEL','LLAMA_MODEL',
   'CUSTOM_BASE_URL','CUSTOM_API_KEY','CUSTOM_MODEL','CUSTOM_AUTH_SCHEME','CCM_LAST_PROVIDER','CLAUDE_CODE_MAX_OUTPUT_TOKENS',
-  'OAICOMPAT_API_KEY','OAICOMPAT_BASE_URL','OAICOMPAT_MODEL','CCM_SOUND_ATTENTION','CCM_SOUND_DONE',
+  'OAICOMPAT_API_KEY','OAICOMPAT_BASE_URL','OAICOMPAT_MODEL','CCM_SOUND_ATTENTION','CCM_SOUND_DONE','CCM_SOUND_INIT',
   'MISTRAL_NATIVE_KEY','MISTRAL_NATIVE_MODEL','OPENAI_NATIVE_KEY','OPENAI_NATIVE_MODEL','GROQ_NATIVE_KEY','GROQ_NATIVE_MODEL',
   'XAI_NATIVE_KEY','XAI_NATIVE_MODEL','TOGETHER_NATIVE_KEY','TOGETHER_NATIVE_MODEL','DEEPINFRA_NATIVE_KEY','DEEPINFRA_NATIVE_MODEL',
   'CEREBRAS_NATIVE_KEY','CEREBRAS_NATIVE_MODEL','FIREWORKS_NATIVE_KEY','FIREWORKS_NATIVE_MODEL','OLLAMA_NATIVE_KEY','OLLAMA_NATIVE_MODEL'

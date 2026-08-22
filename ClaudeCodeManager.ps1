@@ -353,6 +353,10 @@ $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.BackColor = $bg
+# The layout is tall; on short screens or with display scaling it can run past the bottom of the
+# screen. AutoScroll adds a scrollbar so every control is always reachable, and a Shown handler
+# shrinks the window to fit the visible screen area when needed.
+$form.AutoScroll = $true
 $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
 $form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96,96)
 $iconPath = Join-Path $PSScriptRoot 'ccm.ico'
@@ -489,19 +493,21 @@ $btnDonePrev.Text = 'Preview'; $btnDonePrev.Font = $fontS; $btnDonePrev.Size = N
 $grpN.Controls.Add($btnDonePrev)
 
 $btnSaveSnd = New-Object System.Windows.Forms.Button
-$btnSaveSnd.Text = 'Save sound settings'; $btnSaveSnd.Font = $fontB; $btnSaveSnd.Size = New-Object System.Drawing.Size(180,28); $btnSaveSnd.Location = New-Object System.Drawing.Point(12,112); $btnSaveSnd.BackColor = [System.Drawing.Color]::White
+$btnSaveSnd.Text = 'Save sound settings'; $btnSaveSnd.Font = $fontB; $btnSaveSnd.Size = New-Object System.Drawing.Size(180,28); $btnSaveSnd.Location = New-Object System.Drawing.Point(12,142); $btnSaveSnd.BackColor = [System.Drawing.Color]::White
 $grpN.Controls.Add($btnSaveSnd)
 $btnStopSnd = New-Object System.Windows.Forms.Button
-$btnStopSnd.Text = 'Stop sound'; $btnStopSnd.Font = $fontS; $btnStopSnd.Size = New-Object System.Drawing.Size(96,28); $btnStopSnd.Location = New-Object System.Drawing.Point(360,112)
+$btnStopSnd.Text = 'Stop sound'; $btnStopSnd.Font = $fontS; $btnStopSnd.Size = New-Object System.Drawing.Size(96,28); $btnStopSnd.Location = New-Object System.Drawing.Point(360,142)
 $btnStopSnd.Add_Click({ Stop-AllSounds }) | Out-Null
 $grpN.Controls.Add($btnStopSnd)
 $lblSndState = New-Object System.Windows.Forms.Label
-$lblSndState.Font = $fontN; $lblSndState.AutoSize = $true; $lblSndState.MaximumSize = New-Object System.Drawing.Size(150,0); $lblSndState.Location = New-Object System.Drawing.Point(200,118)
+$lblSndState.Font = $fontS; $lblSndState.AutoSize = $true; $lblSndState.MaximumSize = New-Object System.Drawing.Size(150,0); $lblSndState.Location = New-Object System.Drawing.Point(200,150)
 $grpN.Controls.Add($lblSndState)
 
+# Shortcut note - placed ABOVE the buttons so it is always visible and never covered by the
+# status text. This is where the stop-sound shortcut is documented.
 $lblHotkey = New-Object System.Windows.Forms.Label
-$lblHotkey.Text = 'To stop a playing sound: click Stop sound, press Ctrl+Alt+S anytime, or close its Claude Code window.'
-$lblHotkey.Font = $fontS; $lblHotkey.ForeColor = $blue; $lblHotkey.AutoSize = $true; $lblHotkey.MaximumSize = New-Object System.Drawing.Size(448,0); $lblHotkey.Location = New-Object System.Drawing.Point(12,150)
+$lblHotkey.Text = 'Stop a playing sound: press Ctrl + Alt + S anytime, click Stop sound, or close its Claude Code window.'
+$lblHotkey.Font = $fontB; $lblHotkey.ForeColor = $blue; $lblHotkey.AutoSize = $true; $lblHotkey.MaximumSize = New-Object System.Drawing.Size(452,0); $lblHotkey.Location = New-Object System.Drawing.Point(12,110)
 $grpN.Controls.Add($lblHotkey)
 
 $lblOverT = New-Object System.Windows.Forms.Label
@@ -651,8 +657,8 @@ $btnSaveSnd.Add_Click({
         Set-SoundHooks ([bool]$ap) ([bool]$dp)
         Broadcast-EnvChange
         $lblSndState.ForeColor = $green
-        if ($ap -or $dp) { $lblSndState.Text = 'Saved - active in new Claude Code sessions.' }
-        else { $lblSndState.Text = 'Saved - sounds off.' }
+        if ($ap -or $dp) { $lblSndState.Text = 'Saved (new sessions).' }
+        else { $lblSndState.Text = 'Saved - off.' }
     } catch {
         $lblSndState.ForeColor = $red; $lblSndState.Text = ('Could not write hooks: ' + $_.Exception.Message)
     }
@@ -1005,6 +1011,19 @@ try {
     }
 } catch {}
 
+$form.Add_Shown({
+    try {
+        $wa = [System.Windows.Forms.Screen]::FromControl($form).WorkingArea
+        if ($form.Height -gt $wa.Height) {
+            $delta = ($form.Height - $wa.Height) + 8
+            $newW = $form.ClientSize.Width + 20    # room for the vertical scrollbar
+            $newH = $form.ClientSize.Height - $delta
+            if ($newH -lt 420) { $newH = 420 }
+            $form.ClientSize = New-Object System.Drawing.Size($newW, $newH)
+            $form.Top = $wa.Top
+        }
+    } catch {}
+})
 [void]$form.ShowDialog()
 
 try { if ($script:ccmHotkey) { $script:ccmHotkey.Dispose() } } catch {}

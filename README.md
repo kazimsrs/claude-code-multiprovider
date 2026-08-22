@@ -20,7 +20,7 @@ DeepSeek is the everyday default; other providers are one click away. A tiny Win
 
 - **One-click installer** — sets DeepSeek as the default and creates two Desktop icons.
 - **Two Desktop shortcuts:** **Claude Code** (start coding immediately) and **Claude Code Manager** (the GUI).
-- **12 providers, two groups** (see below).
+- **18 providers across four kinds** (see below).
 - **Free-type model box**, inline **Test connection**, **Make this my terminal default**, and **Clear key** buttons.
 
 ## Four kinds of providers — and an honest caveat
@@ -41,7 +41,7 @@ Point the Manager at any base URL + token — subscription "coding plans", self-
 
 ## Notifications — hear when Claude needs you (NEW)
 
-Give Claude Code a long task and walk away; CCM can play a sound when it **needs your input** (a permission prompt / question) and another when a **task finishes**. In the Manager's *Notifications* box, pick a built-in sound (Ping, Bell, Blip, Chime), choose **Custom file…** to use your own `.wav`/`.mp3`/song, or leave it **Off**. Saving wires two [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) (`Notification` and `Stop`) into your `~/.claude/settings.json` — merged non-destructively, so any hooks you already have are preserved. Entirely optional; the normal silent flow is unchanged when both are Off.
+Give Claude Code a long task and walk away; CCM can play a sound when it **needs your input** (a permission prompt / question) and another when a **task finishes**. In the Manager's *Notifications* box, pick a built-in sound (Ping, Bell, Blip, Chime), choose **Custom file…** to use your own `.wav`/`.mp3`/song, or leave it **Off** (the default). Saving wires two [Claude Code hooks](https://docs.claude.com/en/docs/claude-code/hooks) (`Notification` and `Stop`) into your `~/.claude/settings.json` — merged non-destructively, so any hooks you already have are preserved. Sounds play in the background (no extra window) and **stop a playing sound** three ways: press **Ctrl + Alt + S** anytime, click **Stop sound**, or close that session's Claude Code window. Entirely optional; the normal silent flow is unchanged when both are Off.
 
 ## Requirements
 
@@ -54,7 +54,8 @@ Give Claude Code a long task and walk away; CCM can play a sound when it **needs
 1. Download this repo (green **Code** button → Download ZIP, or `git clone`).
 2. Double-click **`install.bat`**.
 3. Open **Claude Code Manager**, pick a provider, paste its key, click **Save key and model**.
-   - For any of the six OpenRouter providers, paste your **OpenRouter** key once — all six light up.
+   - For **OpenRouter**, paste your OpenRouter key once, then pick or type any model slug (click *Refresh models* for the live list, incl. `:free`).
+   - For a **native-key** provider (Mistral, OpenAI, Groq, …), paste that provider's own key; the local claude-code-router proxy is set up automatically on first Launch (needs Node.js).
 4. Click **Test connection** (result shows inline: green *connected OK*, or red with the exact HTTP error), then **Launch Claude Code**.
 5. Or double-click **Claude Code** to start with your terminal default. (If you haven't saved a key yet, the launcher tells you to open the Manager first instead of failing with a cryptic error.)
 

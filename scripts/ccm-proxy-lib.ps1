@@ -117,7 +117,7 @@ function Write-CcrConfig([string]$Base, [string]$Key, [string]$Model) {
   # Built as literal JSON (deterministic; avoids PowerShell's single-element-array unwrapping).
   $json = @"
 {
-  "LOG": false,
+  "LOG": true,
   "HOST": "127.0.0.1",
   "PORT": $CCR_PORT,
   "API_TIMEOUT_MS": 600000,$transformersTop
@@ -143,11 +143,22 @@ function Write-CcrConfig([string]$Base, [string]$Key, [string]$Model) {
   return $cfg
 }
 
-function Get-CcmProxyStatus {
+# Readiness probe: a raw TCP connect to the router's port. This is immune to system HTTP proxies
+# / VPNs (a common reason Invoke-WebRequest fails to reach a localhost service even though it is
+# up) and is the true "is ccr listening" signal. If the port accepts a connection, ccr is ready.
+function Test-CcrPort([int]$TimeoutMs = 1200) {
+  $c = $null
   try {
-    $r = Invoke-WebRequest -Uri "$CCR_BASE/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-    if ($r.StatusCode -eq 200) { return @{ Running=$true; Port=$CCR_PORT } }
-  } catch {}
+    $c = New-Object System.Net.Sockets.TcpClient
+    $iar = $c.BeginConnect('127.0.0.1', $CCR_PORT, $null, $null)
+    if ($iar.AsyncWaitHandle.WaitOne($TimeoutMs) -and $c.Connected) { $c.EndConnect($iar); return $true }
+    return $false
+  } catch { return $false }
+  finally { if ($c) { try { $c.Close() } catch {} } }
+}
+
+function Get-CcmProxyStatus {
+  if (Test-CcrPort) { return @{ Running=$true; Port=$CCR_PORT } }
   return @{ Running=$false }
 }
 
@@ -175,14 +186,11 @@ function Start-CcmProxy([string]$Base, [string]$Key, [string]$Model) {
   } catch {
     return @{ Ok=$false; Msg=("Could not start claude-code-router: " + $_.Exception.Message) }
   }
-  # health poll (allow for a cold Node start on first run)
+  # Readiness poll via TCP connect (proxy/VPN-proof; allow for a cold Node start on first run).
   $ready = $false
-  for ($i = 0; $i -lt 90; $i++) {
-    try {
-      $r = Invoke-WebRequest -Uri "$CCR_BASE/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
-      if ($r.StatusCode -eq 200) { $ready = $true; break }
-    } catch {}
-    Start-Sleep -Milliseconds 700
+  for ($i = 0; $i -lt 60; $i++) {
+    if (Test-CcrPort) { $ready = $true; break }
+    Start-Sleep -Milliseconds 500
   }
   if (-not $ready) {
     $tail = ''

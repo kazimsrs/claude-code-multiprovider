@@ -69,23 +69,34 @@ $sound = if ($Event -eq 'done') { $env:CCM_SOUND_DONE } else { $env:CCM_SOUND_AT
 if ([string]::IsNullOrWhiteSpace($sound)) { return }   # opted out
 if (-not (Test-Path $sound)) { return }
 
-# Find the Claude Code (node) process this hook belongs to, so the worker can stop when that
-# window is closed. Walk up the parent chain from this hook process.
+# Find the Claude Code process this hook belongs to, so the worker can stop the moment that window
+# is closed. Take ONE snapshot of all processes (avoids a race where a transient parent - e.g. a
+# 'cmd /c' hook runner - exits between per-hop queries) and walk the parent chain to the nearest
+# 'node'/'claude' ancestor (Claude Code). Returns 0 if not found (worker then plays to the cap).
+$script:NotifyLog = $null
+try { $d = Join-Path $env:LOCALAPPDATA 'CCM'; if (Test-Path $d) { $script:NotifyLog = Join-Path $d 'notify.log' } } catch {}
+function Note([string]$m) { if ($script:NotifyLog) { try { Add-Content -Path $script:NotifyLog -Value ((Get-Date).ToString('HH:mm:ss') + '  ' + $m) -ErrorAction SilentlyContinue } catch {} } }
+
 function Get-OwnerPid {
   try {
-    $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop
-    for ($i = 0; $i -lt 8 -and $cur; $i++) {
-      $ppid = [int]$cur.ParentProcessId
-      if ($ppid -le 0) { break }
-      $par = Get-CimInstance Win32_Process -Filter "ProcessId=$ppid" -ErrorAction SilentlyContinue
-      if (-not $par) { break }
-      if ($par.Name -match '^node') { return [int]$par.ProcessId }   # claude = node process
-      $cur = $par
+    $map = @{}
+    Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { $map[[int]$_.ProcessId] = $_ }
+    $id = $PID; $trace = @()
+    for ($i = 0; $i -lt 15; $i++) {
+      $p = $map[[int]$id]; if (-not $p) { break }
+      $ppid = [int]$p.ParentProcessId; if ($ppid -le 0) { break }
+      $par = $map[$ppid]; if (-not $par) { break }
+      $nm = ('' + $par.Name).ToLower()
+      $trace += ($nm + '#' + $ppid)
+      if ($nm -like 'node*' -or $nm -like 'claude*') { Note ("owner=node/claude pid=$ppid trace=" + ($trace -join ' > ')); return $ppid }
+      $id = $ppid
     }
-  } catch {}
+    Note ('owner NOT FOUND trace=' + ($trace -join ' > '))
+  } catch { Note ('owner lookup error: ' + $_.Exception.Message) }
   return 0
 }
 $ownerPid = Get-OwnerPid
+Note ("event=$Event ownerPid=$ownerPid sound=$sound")
 
 $self  = $MyInvocation.MyCommand.Path
 $hostExe = (Get-Process -Id $PID).Path

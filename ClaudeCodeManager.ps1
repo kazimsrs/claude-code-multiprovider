@@ -37,8 +37,13 @@ public static extern System.IntPtr GetConsoleWindow();
 public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
 [System.Runtime.InteropServices.DllImport("kernel32.dll")]
 public static extern bool FreeConsole();
+[System.Runtime.InteropServices.DllImport("shell32.dll", SetLastError=true)]
+public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string AppID);
 '@
 }
+# Give the process its own taskbar identity so Windows shows CCM's icon (from $form.Icon) on the
+# taskbar button instead of the generic PowerShell/host icon that a wscript/powershell launch gives.
+try { [CcmNative.Win32]::SetCurrentProcessExplicitAppUserModelID('Kazim.ClaudeCodeManager') } catch {}
 # This is a WinForms GUI - it must open as just the window, never a window plus a black terminal.
 # Hide the host console (SW_HIDE = 0) AND detach from it with FreeConsole. FreeConsole matters on
 # Windows 11 where Windows Terminal is the default host: it ignores -WindowStyle Hidden and shows a
@@ -343,7 +348,7 @@ $fontMono = New-Object System.Drawing.Font('Consolas',9.5)
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Claude Code - Provider Manager'
-$form.ClientSize = New-Object System.Drawing.Size(500,844)
+$form.ClientSize = New-Object System.Drawing.Size(500,878)
 $form.StartPosition = 'CenterScreen'
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -451,11 +456,11 @@ $form.Controls.Add($lblDefNow)
 
 # ---------- Notifications group ----------
 $grpN = New-Object System.Windows.Forms.GroupBox
-$grpN.Text = 'Notifications (optional)'; $grpN.Font = $fontN; $grpN.Size = New-Object System.Drawing.Size(468,150); $grpN.Location = New-Object System.Drawing.Point(16,492)
+$grpN.Text = 'Notifications (optional)'; $grpN.Font = $fontN; $grpN.Size = New-Object System.Drawing.Size(468,182); $grpN.Location = New-Object System.Drawing.Point(16,492)
 $form.Controls.Add($grpN)
 
 $lblNDesc = New-Object System.Windows.Forms.Label
-$lblNDesc.Text = 'Play a sound when Claude Code needs you or finishes - handy when you are not watching. Off = silent. A sound also stops when you close its Claude Code window, or press Ctrl+Alt+S anytime to stop it.'
+$lblNDesc.Text = 'Play a sound when Claude Code needs you or finishes. Off = silent.'
 $lblNDesc.Font = $fontS; $lblNDesc.ForeColor = [System.Drawing.Color]::Gray; $lblNDesc.AutoSize = $true; $lblNDesc.MaximumSize = New-Object System.Drawing.Size(444,0); $lblNDesc.Location = New-Object System.Drawing.Point(12,20)
 $grpN.Controls.Add($lblNDesc)
 
@@ -494,17 +499,22 @@ $lblSndState = New-Object System.Windows.Forms.Label
 $lblSndState.Font = $fontN; $lblSndState.AutoSize = $true; $lblSndState.MaximumSize = New-Object System.Drawing.Size(150,0); $lblSndState.Location = New-Object System.Drawing.Point(200,118)
 $grpN.Controls.Add($lblSndState)
 
+$lblHotkey = New-Object System.Windows.Forms.Label
+$lblHotkey.Text = 'To stop a playing sound: click Stop sound, press Ctrl+Alt+S anytime, or close its Claude Code window.'
+$lblHotkey.Font = $fontS; $lblHotkey.ForeColor = $blue; $lblHotkey.AutoSize = $true; $lblHotkey.MaximumSize = New-Object System.Drawing.Size(448,0); $lblHotkey.Location = New-Object System.Drawing.Point(12,150)
+$grpN.Controls.Add($lblHotkey)
+
 $lblOverT = New-Object System.Windows.Forms.Label
-$lblOverT.Text = 'Saved keys'; $lblOverT.Font = $fontB; $lblOverT.AutoSize = $true; $lblOverT.Location = New-Object System.Drawing.Point(16,650)
+$lblOverT.Text = 'Saved keys'; $lblOverT.Font = $fontB; $lblOverT.AutoSize = $true; $lblOverT.Location = New-Object System.Drawing.Point(16,684)
 $form.Controls.Add($lblOverT)
 
 $lblOver = New-Object System.Windows.Forms.Label
-$lblOver.Font = $fontMono; $lblOver.AutoSize = $true; $lblOver.MaximumSize = New-Object System.Drawing.Size(476,0); $lblOver.Location = New-Object System.Drawing.Point(16,672)
+$lblOver.Font = $fontMono; $lblOver.AutoSize = $true; $lblOver.MaximumSize = New-Object System.Drawing.Size(476,0); $lblOver.Location = New-Object System.Drawing.Point(16,706)
 $form.Controls.Add($lblOver)
 
 $foot = New-Object System.Windows.Forms.Label
 $foot.Text = 'Keys are stored as your Windows user environment variables (plaintext, per-user). The native-key proxy runs locally only while that provider is active.'
-$foot.Font = $fontS; $foot.ForeColor = [System.Drawing.Color]::Gray; $foot.AutoSize = $true; $foot.MaximumSize = New-Object System.Drawing.Size(476,0); $foot.Location = New-Object System.Drawing.Point(16,796)
+$foot.Font = $fontS; $foot.ForeColor = [System.Drawing.Color]::Gray; $foot.AutoSize = $true; $foot.MaximumSize = New-Object System.Drawing.Size(476,0); $foot.Location = New-Object System.Drawing.Point(16,830)
 $form.Controls.Add($foot)
 
 function Current-Prov { return $providers[$combo.SelectedIndex] }

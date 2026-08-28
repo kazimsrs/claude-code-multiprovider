@@ -7,7 +7,8 @@
 #  Empty/unset => silent (user opted this event out). Playback runs in a HIDDEN (no-window)
 #  background worker so it never blocks Claude Code and never pops up a terminal. The worker
 #  stops when: the sound ends, the safety cap is hit, its owning Claude Code process exits
-#  (i.e. you close that window), or CCM's Ctrl+Alt+S hotkey kills it.
+#  (i.e. you close that window), or you press Ctrl+Alt+S (the worker watches for it itself, so the
+#  shortcut works even when CCM is closed and you are only using Claude Code in VS Code).
 # ============================================================
 param(
   [Parameter(Position=0)] [ValidateSet('attention','done')] [string]$Event = 'attention',
@@ -23,6 +24,22 @@ function Test-Alive([int]$procId) {
   try { $null = Get-Process -Id $procId -ErrorAction Stop; return $true } catch { return $false }
 }
 
+# Detect the global stop shortcut (Ctrl+Alt+S) by polling key state - works even when CCM is
+# CLOSED and you're only in VS Code, because the worker itself watches for it (no running GUI
+# needed). GetAsyncKeyState reports whether a key is down right now, regardless of focus.
+if (-not ([System.Management.Automation.PSTypeName]'CcmKey.Async').Type) {
+  try { Add-Type -Namespace CcmKey -Name Async -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vKey);' } catch {}
+}
+function Test-StopHotkey {
+  try {
+    if (-not ([System.Management.Automation.PSTypeName]'CcmKey.Async').Type) { return $false }
+    $ctrl = ([CcmKey.Async]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0   # VK_CONTROL
+    $alt  = ([CcmKey.Async]::GetAsyncKeyState(0x12) -band 0x8000) -ne 0   # VK_MENU (Alt)
+    $sKey = ([CcmKey.Async]::GetAsyncKeyState(0x53) -band 0x8000) -ne 0   # 'S'
+    return ($ctrl -and $alt -and $sKey)
+  } catch { return $false }
+}
+
 function Play-File([string]$path, [int]$cap, [int]$watch) {
   if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path $path)) { return }
   $ext = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
@@ -33,8 +50,9 @@ function Play-File([string]$path, [int]$cap, [int]$watch) {
       $p.Play()
       $elapsed = 0
       while ($elapsed -lt ($cap * 1000)) {
-        Start-Sleep -Milliseconds 200; $elapsed += 200
+        Start-Sleep -Milliseconds 150; $elapsed += 150
         if (-not (Test-Alive $watch)) { break }
+        if (Test-StopHotkey) { break }
       }
       try { $p.Stop() } catch {}
       return
@@ -49,8 +67,9 @@ function Play-File([string]$path, [int]$cap, [int]$watch) {
     $mp.Play()
     $elapsed = 0
     while ($elapsed -lt ($cap * 1000)) {
-      Start-Sleep -Milliseconds 200; $elapsed += 200
+      Start-Sleep -Milliseconds 150; $elapsed += 150
       if (-not (Test-Alive $watch)) { break }            # owning window closed -> stop
+      if (Test-StopHotkey) { break }                     # Ctrl+Alt+S pressed -> stop
       if ($mp.NaturalDuration.HasTimeSpan) {
         if ($mp.Position -ge $mp.NaturalDuration.TimeSpan) { break }
       }

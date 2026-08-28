@@ -61,20 +61,26 @@ try {
     if (-not (Test-Path $vbsPath) -or ((Get-Content $vbsPath -Raw -ErrorAction SilentlyContinue) -ne $vbsBody)) {
         [System.IO.File]::WriteAllText($vbsPath, $vbsBody, (New-Object System.Text.ASCIIEncoding))
     }
-    $desk = [Environment]::GetFolderPath('Desktop')
-    $lnk  = Join-Path $desk 'Claude Code Manager.lnk'
     $wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
     if ((Test-Path $vbsPath) -and (Test-Path $wscript)) {
         $ws = New-Object -ComObject WScript.Shell
-        $sc = $ws.CreateShortcut($lnk)
         $wantArgs = '"' + $vbsPath + '"'
-        if ($sc.TargetPath -ne $wscript -or $sc.Arguments -ne $wantArgs) {
-            $sc.TargetPath = $wscript
-            $sc.Arguments  = $wantArgs
-            $sc.WorkingDirectory = $PSScriptRoot
-            $ico = Join-Path $PSScriptRoot 'ccm.ico'; if (Test-Path $ico) { $sc.IconLocation = $ico + ',0' }
-            $sc.Description = 'Add API keys, change models, switch provider'
-            $sc.Save()
+        $ico = Join-Path $PSScriptRoot 'ccm.ico'
+        # Desktop AND Start Menu, so Windows search / the Start button finds "Claude Code Manager".
+        $targets = @((Join-Path ([Environment]::GetFolderPath('Desktop'))  'Claude Code Manager.lnk'),
+                     (Join-Path ([Environment]::GetFolderPath('Programs')) 'Claude Code Manager.lnk'))
+        foreach ($lnk in $targets) {
+            try {
+                $sc = $ws.CreateShortcut($lnk)
+                if ($sc.TargetPath -ne $wscript -or $sc.Arguments -ne $wantArgs) {
+                    $sc.TargetPath = $wscript
+                    $sc.Arguments  = $wantArgs
+                    $sc.WorkingDirectory = $PSScriptRoot
+                    if (Test-Path $ico) { $sc.IconLocation = $ico + ',0' }
+                    $sc.Description = 'Add API keys, change models, switch provider'
+                    $sc.Save()
+                }
+            } catch {}
         }
     }
 } catch {}

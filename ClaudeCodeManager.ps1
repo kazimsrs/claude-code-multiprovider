@@ -820,23 +820,96 @@ $btnDefault.Add_Click({
     Refresh-Overview
 })
 
+# Locate node.exe once (cached). Node's HTTP stack succeeds against hosts whose Cloudflare/TLS
+# edge stalls or challenges PowerShell's .NET client (e.g. Mistral, OpenRouter), so we use it to
+# validate keys for those "non-Claude-Code-native" providers.
+$script:CcmNodeExe = $null
+function Get-NodeExe {
+    if ($script:CcmNodeExe -and (Test-Path $script:CcmNodeExe)) { return $script:CcmNodeExe }
+    $cands = @()
+    try { $g = Get-Command node.exe -ErrorAction SilentlyContinue; if ($g) { $cands += $g.Source } } catch {}
+    try { $g = Get-Command node    -ErrorAction SilentlyContinue; if ($g -and $g.Source) { $cands += $g.Source } } catch {}
+    $cands += @((Join-Path $env:ProgramFiles 'nodejs\node.exe'),
+                (Join-Path ${env:ProgramFiles(x86)} 'nodejs\node.exe'),
+                (Join-Path $env:LOCALAPPDATA 'Programs\nodejs\node.exe'))
+    foreach ($c in $cands) { if ($c -and (Test-Path $c)) { $script:CcmNodeExe = $c; return $c } }
+    return $null
+}
+
+# Validate one key by GET-ing $url with 'Authorization: Bearer <key>' through Node (browser UA,
+# 12s cap). Returns @{ Ok; Code; Msg } on a definite HTTP/network result, or $null when Node is
+# unavailable OR the endpoint 404/405s (caller then falls back to its PowerShell path).
+function Test-KeyViaNode([string]$url, [string]$key) {
+    $node = Get-NodeExe; if (-not $node) { return $null }
+    $js = Join-Path $ScriptsDir 'ccm-testkey.js'; if (-not (Test-Path $js)) { return $null }
+    $out = ''
+    try { $out = ($key | & $node $js $url 2>&1 | Out-String) } catch { return $null }
+    if ([string]::IsNullOrWhiteSpace($out)) { return $null }
+    $out = $out.Trim()
+    $m = [regex]::Match($out, 'STATUS\s+(\d+)')
+    if ($m.Success) {
+        $code = [int]$m.Groups[1].Value
+        if ($code -ge 200 -and $code -lt 300) { return @{ Ok=$true;  Code=$code; Msg='OK' } }
+        if ($code -eq 401 -or $code -eq 403)  { return @{ Ok=$false; Code=$code; Msg=('HTTP '+$code+' - key rejected. Check the API key.') } }
+        if ($code -eq 404 -or $code -eq 405)  { return $null }   # endpoint unsupported -> caller falls back
+        if ($code -eq 402 -or $code -eq 429)  { return @{ Ok=$false; Code=$code; Msg=('HTTP '+$code+' - out of credit / rate limited') } }
+        return @{ Ok=$false; Code=$code; Msg=('HTTP '+$code) }
+    }
+    $e = [regex]::Match($out, 'ERR\s+(.+)')
+    if ($e.Success) { return @{ Ok=$false; Code=0; Msg=('network: ' + $e.Groups[1].Value.Trim()) } }
+    return $null
+}
+
 function Test-Provider($p) {
     $key = Get-ProvKey $p
     if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $lblState.ForeColor = $red; $lblState.Text = 'no key - save one first'; return }
     $modelRaw = Get-ProvModel $p
     if ([string]::IsNullOrWhiteSpace($modelRaw)) { $lblState.ForeColor = $red; $lblState.Text = 'enter a model'; return }
     $btnTest.Enabled = $false; $lblState.ForeColor = $blue; $lblState.Text = 'testing...'; $form.Refresh()
+    try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
     try {
         if ($p.Kind -eq 'proxy') {
-            # Test the provider's native OpenAI-compatible endpoint directly (fast, no proxy needed).
+            # Validate the key with a fast, model-independent GET /models (auth check only - no
+            # inference, so it is quick and never fails just because a model slug is off).
             $base = $txtBase.Text.Trim(); if ([string]::IsNullOrWhiteSpace($base)) { $base = Get-ProvBase $p }
             if ($base -notmatch '^https?://') { $lblState.ForeColor = $red; $lblState.Text = 'set a base URL'; return }
-            $url = ($base.TrimEnd('/')) + '/chat/completions'
-            $hdr = @{ 'authorization' = 'Bearer ' + $key; 'content-type' = 'application/json' }
-            $body = @{ model = (Api-Model $modelRaw); max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
-            $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdr -Body $body -TimeoutSec 30
-            $lblState.ForeColor = $green; $lblState.Text = 'provider OK (native)'
+            # Fast path: validate via Node (works on Mistral/Cloudflare-fronted hosts that stall PS).
+            $nres = Test-KeyViaNode (($base.TrimEnd('/')) + '/models') $key
+            if ($nres) {
+                if ($nres.Ok) { $lblState.ForeColor = $green; $lblState.Text = 'key valid (provider reachable)' }
+                else          { $lblState.ForeColor = $red;   $lblState.Text = $nres.Msg }
+                return
+            }
+            # Node unavailable or /models unsupported -> PowerShell fallback.
+            $hdr = @{ 'authorization' = 'Bearer ' + $key }
+            try {
+                $null = Invoke-RestMethod -Uri (($base.TrimEnd('/')) + '/models') -Method GET -Headers $hdr -TimeoutSec 15
+                $lblState.ForeColor = $green; $lblState.Text = 'key valid (provider reachable)'
+                return
+            } catch {
+                $code = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+                if ($code -eq 401 -or $code -eq 403) { $lblState.ForeColor = $red; $lblState.Text = ('HTTP ' + $code + ' - key rejected. Check the API key.'); return }
+                # /models not supported (404/405) or unclear -> fall back to a tiny chat completion.
+                $body = @{ model = (Api-Model $modelRaw); max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
+                $hdr['content-type'] = 'application/json'
+                $null = Invoke-RestMethod -Uri (($base.TrimEnd('/')) + '/chat/completions') -Method POST -Headers $hdr -Body $body -TimeoutSec 15
+                $lblState.ForeColor = $green; $lblState.Text = 'key valid (provider reachable)'
+                return
+            }
+        }
+
+        if ($p.Kind -eq 'openrouter') {
+            # OpenRouter: fast auth check that uses no credits and needs no model.
+            $nres = Test-KeyViaNode 'https://openrouter.ai/api/v1/auth/key' $key
+            if ($nres) {
+                if ($nres.Ok) { $lblState.ForeColor = $green; $lblState.Text = 'OpenRouter key valid' }
+                else          { $lblState.ForeColor = $red;   $lblState.Text = $nres.Msg }
+                return
+            }
+            $hdr = @{ 'authorization' = 'Bearer ' + $key }
+            $null = Invoke-RestMethod -Uri 'https://openrouter.ai/api/v1/auth/key' -Method GET -Headers $hdr -TimeoutSec 15
+            $lblState.ForeColor = $green; $lblState.Text = 'OpenRouter key valid'
             return
         }
 
@@ -852,7 +925,7 @@ function Test-Provider($p) {
             $lastErr = ''
             foreach ($s in $schemes) {
                 try {
-                    $null = Invoke-RestMethod -Uri $url -Method POST -Headers $s[1] -Body $body -TimeoutSec 30
+                    $null = Invoke-RestMethod -Uri $url -Method POST -Headers $s[1] -Body $body -TimeoutSec 15
                     Set-UserVar 'CUSTOM_AUTH_SCHEME' $s[0]
                     $lblState.ForeColor = $green; $lblState.Text = ('connected OK (' + $s[0] + ')')
                     return
@@ -881,7 +954,7 @@ function Test-Provider($p) {
         $hdr = @{ 'x-api-key' = $authKey; 'anthropic-version' = '2023-06-01'; 'content-type' = 'application/json' }
         if ($p.Kind -ne 'direct' -or $base -like '*openrouter.ai*') { $hdr['authorization'] = 'Bearer ' + $authKey }
         $body = @{ model = $model; max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
-        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdr -Body $body -TimeoutSec 30
+        $null = Invoke-RestMethod -Uri $url -Method POST -Headers $hdr -Body $body -TimeoutSec 15
         $lblState.ForeColor = $green; $lblState.Text = 'connected OK'
     } catch {
         $code = try { [int]$_.Exception.Response.StatusCode } catch { 0 }

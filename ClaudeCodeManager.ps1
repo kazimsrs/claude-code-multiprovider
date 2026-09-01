@@ -132,6 +132,7 @@ $providers = @(
   @{ Name='Qwen (Alibaba)';      Kind='direct';     Base='https://dashscope-intl.aliyuncs.com/apps/anthropic'; KeyEnv='QWEN_API_KEY';           ModelEnv='QWEN_MODEL';              Default='qwen3.8-max'; Models=@('qwen3.8-max','qwen3-coder-plus','qwen3.7-plus','qwen3.6-plus') },
   @{ Name='MiniMax';             Kind='direct';     Base='https://api.minimax.io/anthropic';                   KeyEnv='MINIMAX_API_KEY';        ModelEnv='MINIMAX_MODEL';           Default='minimax-m2.7'; Models=@('minimax-m2.7','minimax-m2.5') },
   @{ Name='Anthropic (Claude)';  Kind='direct';     Base='https://api.anthropic.com';                          KeyEnv='ANTHROPIC_PROVIDER_KEY'; ModelEnv='ANTHROPIC_PROVIDER_MODEL';Default='claude-opus-4.7'; Models=@('claude-opus-4.7','claude-sonnet-4.6','claude-3.7-sonnet','claude-3.5-haiku') },
+  @{ Name='B.AI';                Kind='direct';     Base='https://api.b.ai/v1';                                KeyEnv='BAI_API_KEY';            ModelEnv='BAI_MODEL';               Default=''; Models=@('claude-sonnet-4-5','claude-3-5-sonnet-latest','gpt-4o','deepseek-chat') },
   @{ Name='OpenRouter';          Kind='openrouter'; Base=$OR_URL; KeyEnv='OPENROUTER_API_KEY'; ModelEnv='OPENROUTER_MODEL'; Default='deepseek/deepseek-chat'; Models=@('deepseek/deepseek-chat','qwen/qwen-2.5-coder-32b-instruct','anthropic/claude-3.5-sonnet','google/gemini-2.0-flash-exp:free','meta-llama/llama-3.3-70b-instruct') },
   # ---- Native-key providers (use the provider's OWN key via a local claude-code-router proxy) ----
   @{ Name='Mistral (native key)';     Kind='proxy'; Base='https://api.mistral.ai/v1';          KeyEnv='MISTRAL_NATIVE_KEY';   ModelEnv='MISTRAL_NATIVE_MODEL';   Default='mistral-large-latest';   Models=@('mistral-large-latest','codestral-latest','mistral-medium-latest','mistral-small-latest','open-mistral-nemo') },
@@ -551,19 +552,19 @@ function Load-Provider {
     $p = Current-Prov
     $typedBase = ($p.Kind -eq 'custom') -or ($p.Kind -eq 'proxy' -and [string]::IsNullOrWhiteSpace($p.Base))
     if ($typedBase) {
-        $lblEnd.Visible = $false; $lblKind.Visible = $true
+        # Base URL box gets its own clear row. lblKind is HIDDEN here because it sat at y=40 and
+        # overlapped the input box (y=44), which made the Base URL field unclickable.
+        $lblEnd.Visible = $false; $lblKind.Visible = $false
         $lblBaseTitle.Visible = $true; $txtBase.Visible = $true
+        $lblBaseTitle.Location = New-Object System.Drawing.Point(14,17)
+        $txtBase.Location      = New-Object System.Drawing.Point(14,40)
         if ($p.Kind -eq 'custom') {
             $b = Get-UserVar 'CUSTOM_BASE_URL'; $txtBase.Text = $(if ($b) { $b } else { '' })
-            $lblBaseTitle.Text = 'Base URL (https). Your token is sent to this endpoint - only use gateways you trust:'
-            $lblKind.ForeColor = $blue
-            $lblKind.Text = 'Type: Custom Anthropic-compatible endpoint (coding plans / self-hosted proxy / gateway).'
+            $lblBaseTitle.Text = 'Anthropic-compatible Base URL (https) - use only gateways you trust:'
             $lblKey.Text = 'API key / token'
         } else {
             $b = Get-UserVar 'OAICOMPAT_BASE_URL'; $txtBase.Text = $(if ($b) { $b } else { '' })
-            $lblBaseTitle.Text = 'Provider base URL (OpenAI-compatible, ends in /v1). Examples: ' + ($ProxyPresets -join '   ')
-            $lblKind.ForeColor = $green
-            $lblKind.Text = 'Type: Native key via local claude-code-router (Node) - use this provider''s OWN key. Proxy runs only while active; first launch sets it up (needs Node.js).'
+            $lblBaseTitle.Text = 'OpenAI-compatible base URL (must end in /v1):'
             $lblKey.Text = 'Provider API key (native)'
         }
     } elseif ($p.Kind -eq 'proxy') {
@@ -1102,6 +1103,10 @@ $form.Add_Shown({
             $form.Top = $wa.Top
         }
     } catch {}
+    # Install/refresh the background "proxy keeper" (a hidden scheduled task) that revives the local
+    # router after sleep/idle WITHOUT needing this window open - so Claude Code in VS Code keeps
+    # working. Its immediate run also heals the proxy right now. Fast no-op once registered.
+    try { Register-CcmKeeper | Out-Null } catch {}
 })
 [void]$form.ShowDialog()
 

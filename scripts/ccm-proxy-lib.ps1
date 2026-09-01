@@ -203,3 +203,110 @@ function Start-CcmProxy([string]$Base, [string]$Key, [string]$Model) {
   }
   return @{ Ok=$true; Port=$CCR_PORT; Base=$CCR_BASE; Msg='Router ready' }
 }
+
+# ============================================================
+#  Proxy keeper registration - installs a hidden scheduled task that runs ccm-keeper.ps1 at logon,
+#  on resume-from-sleep, and every minute, so the local proxy is revived automatically after the
+#  laptop sleeps/idles - WITHOUT needing the CCM window open (you may only be in VS Code). Idempotent:
+#  re-registers only when the install path or keeper version changes (tracked by a small marker file).
+# ============================================================
+$CCM_KEEPER_TASK = 'CCM Proxy Keeper'
+$CCM_KEEPER_VER  = '1'   # bump to force all installs to re-register
+
+function Register-CcmKeeper {
+  try {
+    $vbs = Join-Path $PSScriptRoot 'ccm-keeper-launch.vbs'
+    $ps1 = Join-Path $PSScriptRoot 'ccm-keeper.ps1'
+    if (-not (Test-Path $vbs) -or -not (Test-Path $ps1)) { return $false }
+
+    $sig = $CCM_KEEPER_VER + '|' + $vbs
+    $data = Join-Path $env:LOCALAPPDATA 'CCM'
+    if (-not (Test-Path $data)) { New-Item -ItemType Directory -Force -Path $data | Out-Null }
+    $marker = Join-Path $data 'keeper-task.reg'
+
+    # Already registered for THIS path+version and the task still exists? Then skip (no churn).
+    $exists = $false
+    try { schtasks /query /tn "$CCM_KEEPER_TASK" 1>$null 2>$null; $exists = ($LASTEXITCODE -eq 0) } catch {}
+    if ($exists -and (Test-Path $marker)) {
+      try { if (((Get-Content $marker -Raw -ErrorAction Stop).Trim()) -eq $sig) { return $true } } catch {}
+    }
+
+    $wscript = Join-Path $env:WINDIR 'System32\wscript.exe'
+    if (-not (Test-Path $wscript)) { $wscript = 'wscript.exe' }
+    $user = "$env:USERDOMAIN\$env:USERNAME"
+
+    function _xesc([string]$s) { return ($s -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '"','&quot;') }
+    $vbsX  = _xesc $vbs
+    $wsX   = _xesc $wscript
+    $userX = _xesc $user
+
+    $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Keeps CCM's local proxy (claude-code-router / key rotator) healthy so Claude Code keeps working after sleep or idle.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>$userX</UserId>
+    </LogonTrigger>
+    <EventTrigger>
+      <Enabled>true</Enabled>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and (EventID=1)]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription>
+    </EventTrigger>
+    <TimeTrigger>
+      <Enabled>true</Enabled>
+      <StartBoundary>2020-01-01T00:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT1M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>$userX</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <Enabled>true</Enabled>
+    <Hidden>true</Hidden>
+    <ExecutionTimeLimit>PT4M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$wsX</Command>
+      <Arguments>"$vbsX"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+    $xmlPath = Join-Path $data 'keeper-task.xml'
+    # schtasks /xml expects Unicode (UTF-16LE).
+    [System.IO.File]::WriteAllText($xmlPath, $xml, [System.Text.Encoding]::Unicode)
+    try {
+      schtasks /create /tn "$CCM_KEEPER_TASK" /xml "$xmlPath" /f 1>$null 2>$null
+      if ($LASTEXITCODE -eq 0) {
+        [System.IO.File]::WriteAllText($marker, $sig, (New-Object System.Text.UTF8Encoding($false)))
+        # Kick one run now so the proxy is healthy immediately (don't wait for the first tick).
+        try { schtasks /run /tn "$CCM_KEEPER_TASK" 1>$null 2>$null } catch {}
+        return $true
+      }
+    } catch {}
+    return $false
+  } catch { return $false }
+}

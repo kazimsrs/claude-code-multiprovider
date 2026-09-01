@@ -6,6 +6,9 @@
 $ErrorActionPreference = 'Continue'
 Write-Host 'Uninstalling Claude Code Multi-Provider...' -ForegroundColor Cyan
 
+# Remove the background proxy keeper scheduled task.
+try { schtasks /delete /tn 'CCM Proxy Keeper' /f 1>$null 2>$null; Write-Host '  Removed the proxy keeper task' } catch {}
+
 # Desktop shortcuts
 $desktop = [Environment]::GetFolderPath('Desktop')
 foreach ($n in 'Claude Code.lnk','Claude Code Manager.lnk') {

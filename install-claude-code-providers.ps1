@@ -129,6 +129,9 @@ Write-Host '[6/6] Setting up native-key provider support (claude-code-router)...
 $proxyLib = Join-Path $app 'scripts\ccm-proxy-lib.ps1'
 if (Test-Path $proxyLib) {
     . $proxyLib
+    # Install the background proxy keeper so the local router self-revives after sleep/idle
+    # (Claude Code in VS Code keeps working without opening the Manager).
+    try { if (Register-CcmKeeper) { Write-Host '      Proxy keeper installed (auto-revives after sleep/idle).' -ForegroundColor Green } } catch {}
     if (Test-Ccr) {
         Write-Host '      claude-code-router already installed - ready.' -ForegroundColor Green
     } elseif (-not (Find-Npm)) {

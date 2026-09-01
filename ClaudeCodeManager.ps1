@@ -132,8 +132,18 @@ $providers = @(
   @{ Name='Qwen (Alibaba)';      Kind='direct';     Base='https://dashscope-intl.aliyuncs.com/apps/anthropic'; KeyEnv='QWEN_API_KEY';           ModelEnv='QWEN_MODEL';              Default='qwen3.8-max'; Models=@('qwen3.8-max','qwen3-coder-plus','qwen3.7-plus','qwen3.6-plus') },
   @{ Name='MiniMax';             Kind='direct';     Base='https://api.minimax.io/anthropic';                   KeyEnv='MINIMAX_API_KEY';        ModelEnv='MINIMAX_MODEL';           Default='minimax-m2.7'; Models=@('minimax-m2.7','minimax-m2.5') },
   @{ Name='Anthropic (Claude)';  Kind='direct';     Base='https://api.anthropic.com';                          KeyEnv='ANTHROPIC_PROVIDER_KEY'; ModelEnv='ANTHROPIC_PROVIDER_MODEL';Default='claude-opus-4.7'; Models=@('claude-opus-4.7','claude-sonnet-4.6','claude-3.7-sonnet','claude-3.5-haiku') },
-  @{ Name='B.AI';                Kind='direct';     Base='https://api.b.ai/v1';                                KeyEnv='BAI_API_KEY';            ModelEnv='BAI_MODEL';               Default=''; Models=@('claude-sonnet-4-5','claude-3-5-sonnet-latest','gpt-4o','deepseek-chat') },
   @{ Name='OpenRouter';          Kind='openrouter'; Base=$OR_URL; KeyEnv='OPENROUTER_API_KEY'; ModelEnv='OPENROUTER_MODEL'; Default='deepseek/deepseek-chat'; Models=@('deepseek/deepseek-chat','qwen/qwen-2.5-coder-32b-instruct','anthropic/claude-3.5-sonnet','google/gemini-2.0-flash-exp:free','meta-llama/llama-3.3-70b-instruct') },
+  # ---- More gateways / routers (Anthropic-compatible relay services). Shown under the "More gateways" entry in the dropdown. ----
+  # Each is an editable Anthropic-compatible endpoint: the Base URL is PREFILLED with a best-guess default you can correct per its dashboard.
+  # Key goes via Bearer/x-api-key (auto-detected); model names are usually Claude names (these relay to Claude). Base must NOT include /v1 - Claude Code appends /v1/messages.
+  @{ Name='B.AI';       Group='more'; Kind='direct'; Base='https://api.b.ai/v1'; KeyEnv='BAI_API_KEY'; ModelEnv='BAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-5-sonnet-latest','gpt-4o','deepseek-chat') },
+  @{ Name='Go Router';  Group='more'; Kind='custom'; Base='https://api.gorouter.app'; BaseEnv='GOROUTER_BASE'; SchemeEnv='GOROUTER_SCHEME'; KeyEnv='GOROUTER_KEY'; ModelEnv='GOROUTER_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Aerolink';   Group='more'; Kind='custom'; Base='https://api.aerolink.lat'; BaseEnv='AEROLINK_BASE'; SchemeEnv='AEROLINK_SCHEME'; KeyEnv='AEROLINK_KEY'; ModelEnv='AEROLINK_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Hcnsec';     Group='more'; Kind='custom'; Base='https://api.hcnsec.cn'; BaseEnv='HCNSEC_BASE'; SchemeEnv='HCNSEC_SCHEME'; KeyEnv='HCNSEC_KEY'; ModelEnv='HCNSEC_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Tabitoken';  Group='more'; Kind='custom'; Base='https://api.tabitoken.com'; BaseEnv='TABITOKEN_BASE'; SchemeEnv='TABITOKEN_SCHEME'; KeyEnv='TABITOKEN_KEY'; ModelEnv='TABITOKEN_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Vyceai';     Group='more'; Kind='custom'; Base='https://api.vyceai.com'; BaseEnv='VYCEAI_BASE'; SchemeEnv='VYCEAI_SCHEME'; KeyEnv='VYCEAI_KEY'; ModelEnv='VYCEAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Lmspeed';    Group='more'; Kind='custom'; Base='https://api.lmspeed.net'; BaseEnv='LMSPEED_BASE'; SchemeEnv='LMSPEED_SCHEME'; KeyEnv='LMSPEED_KEY'; ModelEnv='LMSPEED_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='AiAiAi001';  Group='more'; Kind='custom'; Base='https://api.aiaiai001.com'; BaseEnv='AIAIAI_BASE'; SchemeEnv='AIAIAI_SCHEME'; KeyEnv='AIAIAI_KEY'; ModelEnv='AIAIAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
   # ---- Native-key providers (use the provider's OWN key via a local claude-code-router proxy) ----
   @{ Name='Mistral (native key)';     Kind='proxy'; Base='https://api.mistral.ai/v1';          KeyEnv='MISTRAL_NATIVE_KEY';   ModelEnv='MISTRAL_NATIVE_MODEL';   Default='mistral-large-latest';   Models=@('mistral-large-latest','codestral-latest','mistral-medium-latest','mistral-small-latest','open-mistral-nemo') },
   @{ Name='OpenAI (native key)';      Kind='proxy'; Base='https://api.openai.com/v1';          KeyEnv='OPENAI_NATIVE_KEY';    ModelEnv='OPENAI_NATIVE_MODEL';    Default='gpt-4o';                 Models=@('gpt-4o','gpt-4.1','gpt-4o-mini','o4-mini','gpt-4.1-mini') },
@@ -163,7 +173,7 @@ function Set-UserVar($n,$v) { [Environment]::SetEnvironmentVariable($n,$v,'User'
 function Get-ProvKey($p)    { return (Get-UserVar $p.KeyEnv) }
 function Get-ProvModel($p)  { $m = Get-UserVar $p.ModelEnv; if ([string]::IsNullOrWhiteSpace($m)) { return $p.Default } else { return $m } }
 function Get-ProvBase($p)   {
-    if ($p.Kind -eq 'custom') { $b = Get-UserVar 'CUSTOM_BASE_URL'; if ([string]::IsNullOrWhiteSpace($b)) { return '' } else { return $b } }
+    if ($p.Kind -eq 'custom') { $b = Get-UserVar (Get-BaseEnvName $p); if ([string]::IsNullOrWhiteSpace($b)) { if ($p.Base) { return $p.Base } else { return '' } } else { return $b } }
     elseif ($p.Kind -eq 'proxy') { if (-not [string]::IsNullOrWhiteSpace($p.Base)) { return $p.Base }; $b = Get-UserVar 'OAICOMPAT_BASE_URL'; if ([string]::IsNullOrWhiteSpace($b)) { return '' } else { return $b } }
     else { return $p.Base }
 }
@@ -172,9 +182,13 @@ function Api-Model($m)      { return ($m -replace '\[.*?\]','') }
 function Is-ORKey($k)       { return ($k -and ($k -like 'sk-or-*')) }
 function Is-ORSlug($m)      { return ($m -and $m.Contains('/')) }
 function Normalize-Base($b) { if ([string]::IsNullOrWhiteSpace($b)) { return $b }; $b = $b.Trim().TrimEnd('/'); if ($b -match '/v1$') { $b = $b.Substring(0,$b.Length-3).TrimEnd('/') }; return $b }
+# Editable-base ('custom') providers store their base + auth scheme in per-provider env vars when
+# BaseEnv/SchemeEnv are set (the "More gateways"), else the shared CUSTOM_* vars (the plain Custom).
+function Get-BaseEnvName($p)   { if ($p.BaseEnv)   { return $p.BaseEnv }   else { return 'CUSTOM_BASE_URL' } }
+function Get-SchemeEnvName($p) { if ($p.SchemeEnv) { return $p.SchemeEnv } else { return 'CUSTOM_AUTH_SCHEME' } }
 
 function Resolve-Route($p,$key,$model) {
-    if ($p.Kind -eq 'custom') { return @((Normalize-Base (Get-UserVar 'CUSTOM_BASE_URL')), $key) }
+    if ($p.Kind -eq 'custom') { return @((Normalize-Base (Get-ProvBase $p)), $key) }
     if ($p.Kind -eq 'openrouter') { return @($OR_URL, $key) }
     if ((Is-ORKey $key) -or (Is-ORSlug $model)) {
         $k = $key
@@ -382,7 +396,7 @@ $form.Controls.Add($lblProv)
 
 $combo = New-Object System.Windows.Forms.ComboBox
 $combo.DropDownStyle = 'DropDownList'; $combo.Font = $fontN; $combo.Size = New-Object System.Drawing.Size(300,28); $combo.Location = New-Object System.Drawing.Point(16,93)
-foreach ($p in $providers) { [void]$combo.Items.Add($p.Name) }
+# items are filled by Populate-Combo at startup (two-level: main list + "More gateways")
 $form.Controls.Add($combo)
 
 $lblState = New-Object System.Windows.Forms.Label
@@ -530,18 +544,51 @@ $foot.Text = 'Keys are stored as your Windows user environment variables (plaint
 $foot.Font = $fontS; $foot.ForeColor = [System.Drawing.Color]::Gray; $foot.AutoSize = $true; $foot.MaximumSize = New-Object System.Drawing.Size(476,0); $foot.Location = New-Object System.Drawing.Point(16,830)
 $form.Controls.Add($foot)
 
-function Current-Prov { return $providers[$combo.SelectedIndex] }
+# --- Two-level provider dropdown: main providers + a "More gateways" entry that swaps the list to
+# the gateway/router providers (and a "Back" entry to return). Keeps the main list clean/professional.
+$MORE_LABEL = '  More gateways / routers  >'
+$BACK_LABEL = '  < Back to main providers'
+$SENTINEL_MORE = @{ Name=$MORE_LABEL; Sentinel='more' }
+$SENTINEL_BACK = @{ Name=$BACK_LABEL; Sentinel='back' }
+$script:ComboItems = @()      # parallel to $combo.Items: each entry is a provider hashtable or a sentinel
+$script:ComboSwitching = $false
+$script:MoreMode = $false
+function Get-MainProvs { return @($providers | Where-Object { $_.Group -ne 'more' }) }
+function Populate-Combo([bool]$moreMode) {
+    $script:ComboSwitching = $true
+    $combo.Items.Clear()
+    $script:ComboItems = @()
+    if ($moreMode) {
+        $script:ComboItems += $SENTINEL_BACK
+        foreach ($p in $providers) { if ($p.Group -eq 'more') { $script:ComboItems += $p } }
+    } else {
+        foreach ($p in $providers) { if ($p.Group -ne 'more') { $script:ComboItems += $p } }
+        $script:ComboItems += $SENTINEL_MORE
+    }
+    foreach ($it in $script:ComboItems) { [void]$combo.Items.Add($it.Name) }
+    $script:MoreMode = $moreMode
+    $script:ComboSwitching = $false
+}
+function Current-Prov {
+    $i = $combo.SelectedIndex
+    if ($i -lt 0 -or $i -ge $script:ComboItems.Count) { return (Get-MainProvs)[0] }
+    $it = $script:ComboItems[$i]
+    if ($it.Sentinel) { return (Get-MainProvs)[0] }
+    return $it
+}
 
 function Refresh-Overview {
     $direct = @(); $native = @(); $other = @()
+    $gw = @()
     foreach ($p in $providers) {
         $mark = if (Has-Key $p) { '[x]' } else { '[ ]' }
-        if ($p.Kind -eq 'direct') { $direct += ("{0} {1}" -f $mark, ($p.Name -replace ' \(.*\)','')) }
+        if ($p.Group -eq 'more') { $gw += ("{0} {1}" -f $mark, ($p.Name -replace ' \(.*\)','')) }
+        elseif ($p.Kind -eq 'direct') { $direct += ("{0} {1}" -f $mark, ($p.Name -replace ' \(.*\)','')) }
         elseif ($p.Kind -eq 'openrouter') { $other += ("{0} OpenRouter" -f $mark) }
         elseif ($p.Kind -eq 'proxy') { $native += ("{0} {1}" -f $mark, ($p.Name -replace ' \(.*\)','')) }
         else { $other += ("{0} Custom" -f $mark) }
     }
-    $lblOver.Text = ("Direct: " + ($direct -join "   ") + "`r`nNative: " + ($native -join "   ") + "`r`nOther:  " + ($other -join "   "))
+    $lblOver.Text = ("Direct: " + ($direct -join "   ") + "`r`nNative: " + ($native -join "   ") + "`r`nOther:  " + ($other -join "   ") + "`r`nGateways: " + ($gw -join "   "))
     $curm = Get-UserVar 'ANTHROPIC_MODEL'
     $last = Get-UserVar 'CCM_LAST_PROVIDER'
     $name = if ([string]::IsNullOrWhiteSpace($last)) { 'DeepSeek' } else { $last }
@@ -559,8 +606,8 @@ function Load-Provider {
         $lblBaseTitle.Location = New-Object System.Drawing.Point(14,17)
         $txtBase.Location      = New-Object System.Drawing.Point(14,40)
         if ($p.Kind -eq 'custom') {
-            $b = Get-UserVar 'CUSTOM_BASE_URL'; $txtBase.Text = $(if ($b) { $b } else { '' })
-            $lblBaseTitle.Text = 'Anthropic-compatible Base URL (https) - use only gateways you trust:'
+            $txtBase.Text = (Get-ProvBase $p)   # saved base, or the gateway's prefilled default
+            $lblBaseTitle.Text = 'Anthropic-compatible Base URL (https) - prefilled; edit if your dashboard differs:'
             $lblKey.Text = 'API key / token'
         } else {
             $b = Get-UserVar 'OAICOMPAT_BASE_URL'; $txtBase.Text = $(if ($b) { $b } else { '' })
@@ -623,7 +670,14 @@ function Update-RouteHint {
         $lblKind.Text = 'Type: direct (native) - uses this provider''s own API key'
     }
 }
-$combo.Add_SelectedIndexChanged({ Load-Provider })
+$combo.Add_SelectedIndexChanged({
+    if ($script:ComboSwitching) { return }
+    $i = $combo.SelectedIndex; if ($i -lt 0 -or $i -ge $script:ComboItems.Count) { return }
+    $it = $script:ComboItems[$i]
+    if ($it.Sentinel -eq 'more') { Populate-Combo $true;  $combo.SelectedIndex = 1; return }  # 0 is Back, 1 = first gateway
+    if ($it.Sentinel -eq 'back') { Populate-Combo $false; $combo.SelectedIndex = 0; return }
+    Load-Provider
+})
 $txtKey.Add_TextChanged({ Update-RouteHint })
 $txtMod.Add_TextChanged({ Update-RouteHint })
 $btnLatest.Add_Click({
@@ -688,7 +742,7 @@ $btnSave.Add_Click({
         if ([string]::IsNullOrWhiteSpace($model)) { [System.Windows.Forms.MessageBox]::Show("Enter the model name your endpoint expects (e.g. mistral-large-latest, deepseek-chat).",'Claude Code Manager',0,48) | Out-Null; return }
         if (-not $givingKey -and -not $hadKey) { [System.Windows.Forms.MessageBox]::Show("Paste the API key for this provider.",'Claude Code Manager',0,48) | Out-Null; return }
         if (-not $presetProxy) {
-            if ($p.Kind -eq 'custom') { Set-UserVar 'CUSTOM_BASE_URL' $base } else { Set-UserVar 'OAICOMPAT_BASE_URL' $base }
+            if ($p.Kind -eq 'custom') { Set-UserVar (Get-BaseEnvName $p) $base } else { Set-UserVar 'OAICOMPAT_BASE_URL' $base }
         }
         Set-UserVar $p.ModelEnv $model
         if ($givingKey) { Set-UserVar $p.KeyEnv $key }
@@ -763,7 +817,7 @@ function Apply-AnthropicEnv($p, $base, $authKey, $model, $useXApiKey) {
 }
 
 # Custom auth scheme: remember whether x-api-key or Bearer worked (default Bearer).
-function Get-CustomScheme { $s = Get-UserVar 'CUSTOM_AUTH_SCHEME'; if ($s -eq 'xapikey') { return 'xapikey' } else { return 'bearer' } }
+function Get-CustomScheme($p) { $s = Get-UserVar (Get-SchemeEnvName $p); if ($s -eq 'xapikey') { return 'xapikey' } else { return 'bearer' } }
 
 # Start the native-key proxy; if claude-code-router isn't set up yet, offer a ONE-TIME install
 # (never on every launch, never hangs - the install is time-boxed). Returns the Start-CcmProxy result.
@@ -807,9 +861,9 @@ $btnDefault.Add_Click({
     Stop-CcmProxy   # any non-proxy default => proxy not needed
     $useX = $false
     if ($p.Kind -eq 'custom') {
-        $base = Normalize-Base (Get-UserVar 'CUSTOM_BASE_URL')
+        $base = Normalize-Base (Get-ProvBase $p)
         if ([string]::IsNullOrWhiteSpace($base)) { [System.Windows.Forms.MessageBox]::Show("Set and save this provider's Base URL first.",'Claude Code Manager',0,48) | Out-Null; return }
-        $authKey = $key; $useX = ((Get-CustomScheme) -eq 'xapikey')
+        $authKey = $key; $useX = ((Get-CustomScheme $p) -eq 'xapikey')
     } else {
         $rr = Resolve-Route $p $key $model; $base = $rr[0]; $authKey = $rr[1]
     }
@@ -927,7 +981,7 @@ function Test-Provider($p) {
             foreach ($s in $schemes) {
                 try {
                     $null = Invoke-RestMethod -Uri $url -Method POST -Headers $s[1] -Body $body -TimeoutSec 15
-                    Set-UserVar 'CUSTOM_AUTH_SCHEME' $s[0]
+                    Set-UserVar (Get-SchemeEnvName $p) $s[0]
                     $lblState.ForeColor = $green; $lblState.Text = ('connected OK (' + $s[0] + ')')
                     return
                 } catch {
@@ -989,7 +1043,7 @@ function Start-Claude($p) {
     } else {
         Stop-CcmProxy   # not needed for non-proxy providers
         if ($p.Kind -eq 'custom') {
-            $base = Normalize-Base (Get-UserVar 'CUSTOM_BASE_URL'); $authKey = $key; $useX = ((Get-CustomScheme) -eq 'xapikey'); $model = Api-Model $model
+            $base = Normalize-Base (Get-ProvBase $p); $authKey = $key; $useX = ((Get-CustomScheme $p) -eq 'xapikey'); $model = Api-Model $model
         } else {
             $rr = Resolve-Route $p $key $model; $base = $rr[0]; $authKey = $rr[1]
             if ($p.Kind -eq 'openrouter') { $model = Api-Model $model }
@@ -1070,11 +1124,15 @@ if ((Get-UserVar 'CCM_SOUND_INIT') -eq '1') {
 $cboAttn.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_ATTENTION')
 $cboDone.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_DONE')
 
-# Open on the provider you last launched / made default (falls back to the first provider).
-$startIdx = 0
+# Open on the provider you last launched / made default (falls back to the first provider). If that
+# provider lives under "More gateways", open the dropdown already in gateway mode showing it.
 $lastProv = Get-UserVar 'CCM_LAST_PROVIDER'
-if (-not [string]::IsNullOrWhiteSpace($lastProv)) { for ($i = 0; $i -lt $providers.Count; $i++) { if (($providers[$i].Name -replace ' \(.*\)','') -eq $lastProv) { $startIdx = $i; break } } }
-$combo.SelectedIndex = $startIdx
+$startTarget = $null
+if (-not [string]::IsNullOrWhiteSpace($lastProv)) { foreach ($p in $providers) { if (($p.Name -replace ' \(.*\)','') -eq $lastProv) { $startTarget = $p; break } } }
+Populate-Combo ($startTarget -and $startTarget.Group -eq 'more')
+$startIdx = 0
+if ($startTarget) { for ($j = 0; $j -lt $script:ComboItems.Count; $j++) { $it = $script:ComboItems[$j]; if (-not $it.Sentinel -and $it.Name -eq $startTarget.Name) { $startIdx = $j; break } } }
+$script:ComboSwitching = $true; $combo.SelectedIndex = $startIdx; $script:ComboSwitching = $false
 Load-Provider
 Refresh-Overview
 # If we're not resuming on a native-key provider, stop any leftover proxy from a previous session

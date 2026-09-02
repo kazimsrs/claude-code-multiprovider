@@ -187,6 +187,24 @@ function Normalize-Base($b) { if ([string]::IsNullOrWhiteSpace($b)) { return $b 
 # BaseEnv/SchemeEnv are set (the "More gateways"), else the shared CUSTOM_* vars (the plain Custom).
 function Get-BaseEnvName($p)   { if ($p.BaseEnv)   { return $p.BaseEnv }   else { return 'CUSTOM_BASE_URL' } }
 function Get-SchemeEnvName($p) { if ($p.SchemeEnv) { return $p.SchemeEnv } else { return 'CUSTOM_AUTH_SCHEME' } }
+# One-time cleanup: earlier builds prefilled some gateway Base URLs at api.<domain> hosts that don't
+# exist (ENOTFOUND). If a SAVED gateway base still equals one of those dead values, clear it so the
+# corrected default prefills. A base the user typed themselves is left untouched.
+function Migrate-GatewayBases {
+    $dead = @{
+        'GOROUTER_BASE'  = 'https://api.gorouter.app'
+        'VYCEAI_BASE'    = 'https://api.vyceai.com'
+        'TABITOKEN_BASE' = 'https://api.tabitoken.com'
+        'LMSPEED_BASE'   = 'https://api.lmspeed.net'
+        'AEROLINK_BASE'  = 'https://api.aerolink.lat'
+    }
+    foreach ($k in @($dead.Keys)) {
+        $cur = Get-UserVar $k
+        if ($cur -and ($cur.Trim().TrimEnd('/') -ieq $dead[$k])) { Set-UserVar $k $null }
+    }
+    $b = Get-UserVar 'ANTHROPIC_BASE_URL'
+    if ($b -and ($b -match 'api\.gorouter\.app|api\.vyceai\.com|api\.tabitoken\.com|api\.lmspeed\.net|api\.aerolink\.lat')) { Set-UserVar 'ANTHROPIC_BASE_URL' $null }
+}
 
 function Resolve-Route($p,$key,$model) {
     if ($p.Kind -eq 'custom') { return @((Normalize-Base (Get-ProvBase $p)), $key) }
@@ -864,6 +882,11 @@ $btnDefault.Add_Click({
     if ($p.Kind -eq 'custom') {
         $base = Normalize-Base (Get-ProvBase $p)
         if ([string]::IsNullOrWhiteSpace($base)) { [System.Windows.Forms.MessageBox]::Show("Set and save this provider's Base URL first.",'Claude Code Manager',0,48) | Out-Null; return }
+        # If this gateway's auth style isn't known yet, detect it now (x-api-key vs Bearer) so Launch
+        # works even if you never clicked Test.
+        if ([string]::IsNullOrWhiteSpace((Get-UserVar (Get-SchemeEnvName $p)))) {
+            try { $det = Test-MsgViaNode $base $key (Api-Model $model); if ($det -and $det.Ok -and $det.Scheme) { Set-UserVar (Get-SchemeEnvName $p) $det.Scheme } } catch {}
+        }
         $authKey = $key; $useX = ((Get-CustomScheme $p) -eq 'xapikey')
     } else {
         $rr = Resolve-Route $p $key $model; $base = $rr[0]; $authKey = $rr[1]
@@ -940,8 +963,8 @@ function Test-MsgViaNode([string]$base, [string]$key, [string]$model) {
 }
 
 function Test-Provider($p) {
-    $key = Get-ProvKey $p
-    if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $lblState.ForeColor = $red; $lblState.Text = 'no key - save one first'; return }
+    $key = $txtKey.Text.Trim(); if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $key = Get-ProvKey $p }
+    if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $lblState.ForeColor = $red; $lblState.Text = 'no key - paste one above'; return }
     $modelRaw = Get-ProvModel $p
     if ([string]::IsNullOrWhiteSpace($modelRaw)) { $lblState.ForeColor = $red; $lblState.Text = 'enter a model'; return }
     $btnTest.Enabled = $false; $lblState.ForeColor = $blue; $lblState.Text = 'testing...'; $form.Refresh()
@@ -1037,6 +1060,13 @@ function Test-Provider($p) {
         if ($w) { $lblState.ForeColor = $red; $lblState.Text = 'key format looks wrong'; return }
         $model = Api-Model $modelRaw
         $url = ($base.TrimEnd('/')) + '/v1/messages'
+        # Fast path: test via Node (works on Cloudflare-fronted hosts like B.AI that stall PowerShell).
+        $nres = Test-MsgViaNode $base $authKey $model
+        if ($nres) {
+            if ($nres.Ok) { $lblState.ForeColor = $green; $lblState.Text = 'connected OK' }
+            else          { $lblState.ForeColor = $red;   $lblState.Text = $nres.Msg }
+            return
+        }
         $hdr = @{ 'x-api-key' = $authKey; 'anthropic-version' = '2023-06-01'; 'content-type' = 'application/json' }
         if ($p.Kind -ne 'direct' -or $base -like '*openrouter.ai*') { $hdr['authorization'] = 'Bearer ' + $authKey }
         $body = @{ model = $model; max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
@@ -1155,6 +1185,7 @@ if ((Get-UserVar 'CCM_SOUND_INIT') -eq '1') {
 $cboAttn.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_ATTENTION')
 $cboDone.Text = Sound-DisplayFromPath (Get-UserVar 'CCM_SOUND_DONE')
 
+Migrate-GatewayBases   # clear any saved gateway base still pointing at a dead api.<domain> host
 # Open on the provider you last launched / made default (falls back to the first provider). If that
 # provider lives under "More gateways", open the dropdown already in gateway mode showing it.
 $lastProv = Get-UserVar 'CCM_LAST_PROVIDER'

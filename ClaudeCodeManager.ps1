@@ -136,14 +136,15 @@ $providers = @(
   # ---- More gateways / routers (Anthropic-compatible relay services). Shown under the "More gateways" entry in the dropdown. ----
   # Each is an editable Anthropic-compatible endpoint: the Base URL is PREFILLED with a best-guess default you can correct per its dashboard.
   # Key goes via Bearer/x-api-key (auto-detected); model names are usually Claude names (these relay to Claude). Base must NOT include /v1 - Claude Code appends /v1/messages.
-  @{ Name='B.AI';       Group='more'; Kind='direct'; Base='https://api.b.ai/v1'; KeyEnv='BAI_API_KEY'; ModelEnv='BAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-5-sonnet-latest','gpt-4o','deepseek-chat') },
-  @{ Name='Go Router';  Group='more'; Kind='custom'; Base='https://api.gorouter.app'; BaseEnv='GOROUTER_BASE'; SchemeEnv='GOROUTER_SCHEME'; KeyEnv='GOROUTER_KEY'; ModelEnv='GOROUTER_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
-  @{ Name='Aerolink';   Group='more'; Kind='custom'; Base='https://api.aerolink.lat'; BaseEnv='AEROLINK_BASE'; SchemeEnv='AEROLINK_SCHEME'; KeyEnv='AEROLINK_KEY'; ModelEnv='AEROLINK_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
-  @{ Name='Hcnsec';     Group='more'; Kind='custom'; Base='https://api.hcnsec.cn'; BaseEnv='HCNSEC_BASE'; SchemeEnv='HCNSEC_SCHEME'; KeyEnv='HCNSEC_KEY'; ModelEnv='HCNSEC_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
-  @{ Name='Tabitoken';  Group='more'; Kind='custom'; Base='https://api.tabitoken.com'; BaseEnv='TABITOKEN_BASE'; SchemeEnv='TABITOKEN_SCHEME'; KeyEnv='TABITOKEN_KEY'; ModelEnv='TABITOKEN_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
-  @{ Name='Vyceai';     Group='more'; Kind='custom'; Base='https://api.vyceai.com'; BaseEnv='VYCEAI_BASE'; SchemeEnv='VYCEAI_SCHEME'; KeyEnv='VYCEAI_KEY'; ModelEnv='VYCEAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
-  @{ Name='Lmspeed';    Group='more'; Kind='custom'; Base='https://api.lmspeed.net'; BaseEnv='LMSPEED_BASE'; SchemeEnv='LMSPEED_SCHEME'; KeyEnv='LMSPEED_KEY'; ModelEnv='LMSPEED_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='B.AI';       Group='more'; Kind='direct'; Base='https://api.b.ai/v1'; KeyEnv='BAI_API_KEY'; ModelEnv='BAI_MODEL'; Default='deepseek-v4-flash'; Models=@('deepseek-v4-flash','deepseek-v4-flash-vision-exp','hy3','mimo-v2.5','glm-5.3-flash','qwen3.8-flash') },
+  @{ Name='Go Router';  Group='more'; Kind='custom'; Base='https://gorouter.app'; BaseEnv='GOROUTER_BASE'; SchemeEnv='GOROUTER_SCHEME'; KeyEnv='GOROUTER_KEY'; ModelEnv='GOROUTER_MODEL'; Default='claude-opus-5'; Models=@('claude-opus-5','claude-opus-5-thinking') },
+  @{ Name='Aerolink';   Group='more'; Kind='custom'; Base='https://capi.aerolink.lat'; BaseEnv='AEROLINK_BASE'; SchemeEnv='AEROLINK_SCHEME'; KeyEnv='AEROLINK_KEY'; ModelEnv='AEROLINK_MODEL'; Default='claude-fable-5'; Models=@('claude-fable-5','claude-opus-5','opus-5','claude-sonnet-4-6','claude-haiku-3','claude-code') },
+  @{ Name='Hcnsec';     Group='more'; Kind='custom'; Base='https://api.hcnsec.cn'; BaseEnv='HCNSEC_BASE'; SchemeEnv='HCNSEC_SCHEME'; KeyEnv='HCNSEC_KEY'; ModelEnv='HCNSEC_MODEL'; Default='auto'; Models=@('auto','Qwen3.8-27B','sensenova-6.8-flash-lite') },
+  @{ Name='Tabitoken';  Group='more'; Kind='custom'; Base='https://tabitoken.com'; BaseEnv='TABITOKEN_BASE'; SchemeEnv='TABITOKEN_SCHEME'; KeyEnv='TABITOKEN_KEY'; ModelEnv='TABITOKEN_MODEL'; Default='claude-opus-5'; Models=@('claude-opus-5','claude-opus-5-thinking') },
+  @{ Name='Vyceai';     Group='more'; Kind='custom'; Base='https://vyceai.com'; BaseEnv='VYCEAI_BASE'; SchemeEnv='VYCEAI_SCHEME'; KeyEnv='VYCEAI_KEY'; ModelEnv='VYCEAI_MODEL'; Default='deepseek-v4-flash'; Models=@('deepseek-v4-flash','claude-sonnet-4-6-pro','claude-sonnet-4-6') },
+  @{ Name='Lmspeed';    Group='more'; Kind='custom'; Base='https://lmspeed.net'; BaseEnv='LMSPEED_BASE'; SchemeEnv='LMSPEED_SCHEME'; KeyEnv='LMSPEED_KEY'; ModelEnv='LMSPEED_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
   @{ Name='AiAiAi001';  Group='more'; Kind='custom'; Base='https://api.aiaiai001.com'; BaseEnv='AIAIAI_BASE'; SchemeEnv='AIAIAI_SCHEME'; KeyEnv='AIAIAI_KEY'; ModelEnv='AIAIAI_MODEL'; Default=''; Models=@('claude-sonnet-4-5','claude-3-7-sonnet','claude-opus-4-1','claude-3-5-haiku') },
+  @{ Name='Agent Router'; Group='more'; Kind='custom'; Base='https://agentrouter.org'; BaseEnv='AGENTROUTER_BASE'; SchemeEnv='AGENTROUTER_SCHEME'; KeyEnv='AGENTROUTER_KEY'; ModelEnv='AGENTROUTER_MODEL'; Default='claude-sonnet-4-5'; Models=@('claude-sonnet-4-5','claude-opus-4-1','gpt-5','deepseek-chat') },
   # ---- Native-key providers (use the provider's OWN key via a local claude-code-router proxy) ----
   @{ Name='Mistral (native key)';     Kind='proxy'; Base='https://api.mistral.ai/v1';          KeyEnv='MISTRAL_NATIVE_KEY';   ModelEnv='MISTRAL_NATIVE_MODEL';   Default='mistral-large-latest';   Models=@('mistral-large-latest','codestral-latest','mistral-medium-latest','mistral-small-latest','open-mistral-nemo') },
   @{ Name='OpenAI (native key)';      Kind='proxy'; Base='https://api.openai.com/v1';          KeyEnv='OPENAI_NATIVE_KEY';    ModelEnv='OPENAI_NATIVE_MODEL';    Default='gpt-4o';                 Models=@('gpt-4o','gpt-4.1','gpt-4o-mini','o4-mini','gpt-4.1-mini') },
@@ -915,6 +916,29 @@ function Test-KeyViaNode([string]$url, [string]$key) {
     return $null
 }
 
+# Validate a key against an Anthropic-compatible gateway by POSTing /v1/messages through Node
+# (works on Cloudflare-fronted gateways that stall PowerShell). Tries x-api-key then Bearer.
+# Returns @{ Ok; Code; Scheme; Msg } or $null when Node is unavailable (caller falls back to PS).
+function Test-MsgViaNode([string]$base, [string]$key, [string]$model) {
+    $node = Get-NodeExe; if (-not $node) { return $null }
+    $js = Join-Path $ScriptsDir 'ccm-testmsg.js'; if (-not (Test-Path $js)) { return $null }
+    $out = ''
+    try { $out = ($key | & $node $js $base $model 2>&1 | Out-String) } catch { return $null }
+    if ([string]::IsNullOrWhiteSpace($out)) { return $null }
+    $out = $out.Trim()
+    $m = [regex]::Match($out, 'OK\s+(\w+)\s+(\d+)')
+    if ($m.Success) { return @{ Ok=$true; Code=[int]$m.Groups[2].Value; Scheme=$m.Groups[1].Value; Msg=('connected OK (' + $m.Groups[1].Value + ')') } }
+    $s = [regex]::Match($out, 'STATUS\s+(\d+)\s+(\w+)\s*(.*)')
+    if ($s.Success) {
+        $code = [int]$s.Groups[1].Value; $snip = $s.Groups[3].Value.Trim()
+        $mm = [regex]::Match($snip, '"message"\s*:\s*"([^"]+)"'); if ($mm.Success) { $snip = $mm.Groups[1].Value }
+        return @{ Ok=$false; Code=$code; Scheme=$s.Groups[2].Value; Msg=('HTTP ' + $code + $(if ($snip) { ': ' + $snip } else { '' })) }
+    }
+    $e = [regex]::Match($out, 'ERR\s+(.+)')
+    if ($e.Success) { return @{ Ok=$false; Code=0; Msg=('network: ' + $e.Groups[1].Value.Trim()) } }
+    return $null
+}
+
 function Test-Provider($p) {
     $key = Get-ProvKey $p
     if ([string]::IsNullOrWhiteSpace($key) -or $key -eq $PLACEHOLDER) { $lblState.ForeColor = $red; $lblState.Text = 'no key - save one first'; return }
@@ -973,6 +997,13 @@ function Test-Provider($p) {
             if ($base -notmatch '^https://') { $lblState.ForeColor = $red; $lblState.Text = 'set a https Base URL'; return }
             $url = ($base.TrimEnd('/')) + '/v1/messages'
             $model = Api-Model $modelRaw
+            # Fast path: test via Node (works on Cloudflare-fronted gateways that stall PS).
+            $nres = Test-MsgViaNode $base $key $model
+            if ($nres) {
+                if ($nres.Ok) { if ($nres.Scheme) { Set-UserVar (Get-SchemeEnvName $p) $nres.Scheme }; $lblState.ForeColor = $green; $lblState.Text = $nres.Msg }
+                else          { $lblState.ForeColor = $red;   $lblState.Text = $nres.Msg }
+                return
+            }
             $body = @{ model = $model; max_tokens = 16; messages = @(@{ role='user'; content='ping' }) } | ConvertTo-Json -Depth 6
             # Try x-api-key first, then Bearer; remember whichever works.
             $schemes = @(@('xapikey', @{ 'x-api-key'=$key; 'anthropic-version'='2023-06-01'; 'content-type'='application/json' }),
